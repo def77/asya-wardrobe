@@ -18,9 +18,11 @@
       <span class="bar-title" id="title">гардероб</span>
       <span class="bar-season" id="season"></span>
       <nav class="bar-menu">
+        <button data-act="add" id="addBtn" hidden>+ вещь</button>
         <button data-act="theme">клетка</button>
         <button data-act="sound" id="soundBtn">звук</button>
         <button data-act="full">экран</button>
+        <button data-act="auth" id="authBtn" hidden>вход</button>
       </nav>
     </header>
 
@@ -69,7 +71,11 @@
           <button data-nudge="0,2">↓</button>
           <button data-scale="0.95">−</button>
           <button data-scale="1.05">+</button>
-          <button data-act="resetfit">сброс</button>
+          <button data-act="resetfit" title="вернуть как было">↺</button>
+        </div>
+        <div class="tune-model" id="tuneModel" hidden>
+          <label class="mini-btn">моё фото<input type="file" accept="image/*" id="modelFile" hidden></label>
+          <button class="mini-btn" data-act="doll" id="dollBtn">вернуть манекен</button>
         </div>
       </div>
       <div class="win-actions">
@@ -81,8 +87,45 @@
   </div>
 </div>
 
+<div class="modal" id="addModal" hidden>
+  <div class="win">
+    <div class="win-bar"><span>новая_вещь.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
+    <div class="win-body">
+      <label class="drop" id="drop">
+        <input type="file" accept="image/*" id="addFile" hidden>
+        <img id="addPreview" alt="" hidden>
+        <span id="dropText">📷 сфоткать<br>или выбрать фото</span>
+      </label>
+      <label class="check"><input type="checkbox" id="addBg" checked> убрать фон автоматически</label>
+      <p class="status" id="addStatus"></p>
+      <div class="cats" id="addCats">
+        <label><input type="radio" name="cat" value="top" checked><span>верх</span></label>
+        <label><input type="radio" name="cat" value="bottom"><span>низ</span></label>
+        <label><input type="radio" name="cat" value="shoes"><span>обувь</span></label>
+        <label><input type="radio" name="cat" value="bag"><span>сумки</span></label>
+      </div>
+      <input class="field" id="addName" placeholder="название, например «серый свитер»" maxlength="60" autocomplete="off">
+      <button class="big big-blue" data-act="save" id="saveBtn">в гардероб</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="authModal" hidden>
+  <div class="win win-small">
+    <div class="win-bar"><span>вход.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
+    <form class="win-body" id="authForm">
+      <input class="field" type="email" id="authEmail" placeholder="почта" autocomplete="username" required>
+      <input class="field" type="password" id="authPass" placeholder="пароль" autocomplete="current-password" required>
+      <p class="status" id="authStatus"></p>
+      <button class="big big-blue" type="submit" id="authSubmit">войти</button>
+    </form>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
 <script src="wardrobe.js"></script>
 <script src="app.js"></script>
 </body>
