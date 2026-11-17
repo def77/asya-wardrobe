@@ -5,18 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Гардероб Аси</title>
 <meta name="theme-color" content="#5a1622">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Гардероб">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%235a1622'/><path d='M3 5l3-2h4l3 2-2 2v6H5V7z' fill='%23f3ece6'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div class="frame">
   <div class="screen">
     <header class="bar">
       <span class="bar-title" id="title">гардероб</span>
-      <span class="bar-season" id="season"></span>
+      <button class="bar-season" data-act="season" id="seasonBtn" title="фильтр по сезону">весь год</button>
       <nav class="bar-menu">
         <button data-act="add" id="addBtn" hidden>+ вещь</button>
         <button data-act="theme">клетка</button>
@@ -26,20 +28,32 @@
       </nav>
     </header>
 
+    <div class="weather" id="weather" hidden>
+      <span class="weather-text" id="weatherText"></span>
+      <button class="weather-btn" data-act="city" title="сменить город">📍</button>
+      <button class="weather-btn" data-act="hideweather" aria-label="скрыть">×</button>
+    </div>
+
     <main class="board" id="board">
       <section class="col col-side">
+        <div class="slot" data-cat="outer"></div>
+        <div class="slot" data-cat="hat"></div>
         <div class="slot" data-cat="shoes"></div>
-        <button class="big" data-act="like">♥ в лукбук</button>
       </section>
       <section class="col col-mid">
         <div class="slot slot-wide" data-cat="top"></div>
         <div class="slot slot-wide" data-cat="bottom"></div>
       </section>
       <section class="col col-side">
+        <div class="slot" data-cat="jewelry"></div>
         <div class="slot" data-cat="bag"></div>
+      </section>
+      <div class="actions">
+        <button class="big" data-act="like">♥ в лукбук</button>
+        <button class="big big-sun" data-act="today">☀ что надеть сегодня</button>
         <button class="big big-blue" data-act="random">рандом</button>
         <button class="big" data-act="wear">надень меня</button>
-      </section>
+      </div>
     </main>
 
     <section class="lookbook" id="lookbook" hidden>
@@ -52,8 +66,8 @@
     </footer>
   </div>
   <div class="hint">
-    <span>примерочная-95 · v4</span>
-    <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк</span>
+    <span>примерочная-95 · v5</span>
+    <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк · S — сезон</span>
   </div>
 </div>
 
@@ -89,21 +103,19 @@
 
 <div class="modal" id="addModal" hidden>
   <div class="win">
-    <div class="win-bar"><span>новая_вещь.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
+    <div class="win-bar"><span id="addTitle">новая_вещь.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
     <div class="win-body">
       <label class="drop" id="drop">
         <input type="file" accept="image/*" id="addFile" hidden>
         <img id="addPreview" alt="" hidden>
         <span id="dropText">📷 сфоткать<br>или выбрать фото</span>
       </label>
-      <label class="check"><input type="checkbox" id="addBg" checked> убрать фон автоматически</label>
+      <label class="check" id="addBgRow"><input type="checkbox" id="addBg" checked> убрать фон автоматически</label>
       <p class="status" id="addStatus"></p>
-      <div class="cats" id="addCats">
-        <label><input type="radio" name="cat" value="top" checked><span>верх</span></label>
-        <label><input type="radio" name="cat" value="bottom"><span>низ</span></label>
-        <label><input type="radio" name="cat" value="shoes"><span>обувь</span></label>
-        <label><input type="radio" name="cat" value="bag"><span>сумки</span></label>
-      </div>
+      <p class="field-label">категория</p>
+      <div class="cats" id="addCats"></div>
+      <p class="field-label">сезон <small>(ничего не выбрано = всесезонная)</small></p>
+      <div class="cats cats-4" id="addSeasons"></div>
       <input class="field" id="addName" placeholder="название, например «серый свитер»" maxlength="60" autocomplete="off">
       <button class="big big-blue" data-act="save" id="saveBtn">в гардероб</button>
     </div>
@@ -124,9 +136,9 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/supabase.js?v=4"></script>
-<script src="config.js?v=4"></script>
-<script src="wardrobe.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="vendor/supabase.js?v=5"></script>
+<script src="config.js?v=5"></script>
+<script src="wardrobe.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

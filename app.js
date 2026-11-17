@@ -2,14 +2,18 @@
   "use strict";
   const W = window.WARDROBE;
   const CFG = window.CLOUD || {};
-  const CATS = ["top", "bottom", "shoes", "bag"];
-  const LAYER_Z = { shoes: 1, bottom: 2, top: 3, bag: 4 };
+  const CATS = Object.keys(W.categories);
+  const NAV = ["outer", "hat", "shoes", "top", "bottom", "jewelry", "bag"].filter((c) => CATS.includes(c));
+  const LAYER_Z = Object.fromEntries(W.layers.map((c, i) => [c, i + 1]));
+  const SEASONS = Object.keys(W.seasons);
   const THEMES = ["", "pink", "green", "yellow"];
   const BUCKET = "wardrobe";
   const URL_TTL = 60 * 60 * 24 * 7; // signed image links live a week; refreshed on every page load
   const BG_LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const isOpt = (c) => !!W.categories[c].optional;
+  const rnd = (a) => a[Math.floor(Math.random() * a.length)];
 
   /* ---------- local storage (per-device prefs, demo data) ---------- */
   const store = {
@@ -18,14 +22,15 @@
   };
 
   /* ---------- data ---------- */
-  const cloud = { sb: null, user: null };
+  const cloud = { sb: null, user: null, needsMigration: false };
   let items = [], byCat = {}, byId = {}, looks = [];
   let modelUrl = W.model, modelPath = null;
   const demoFits = store.get("fits", {});
 
   const state = {
-    idx: { top: 0, bottom: 0, shoes: 0, bag: 0 },
+    idx: Object.fromEntries(CATS.map((c) => [c, -1])), // -1 = nothing chosen
     focus: "top",
+    season: store.get("season", ""),
     sound: store.get("sound", true),
     theme: store.get("theme", ""),
     tuning: false,
@@ -34,13 +39,15 @@
   };
 
   const isCloud = () => !!cloud.user;
-  const current = (c) => byCat[c][state.idx[c]];
+  const current = (c) => (state.idx[c] >= 0 ? byCat[c][state.idx[c]] : null);
   const outfit = () => Object.fromEntries(CATS.map((c) => [c, current(c)?.id || null]));
   const curKey = () => (isCloud() ? "current-cloud" : "current");
   const saveCurrent = () => store.set(curKey(), outfit());
   const parseBox = (b) => (Array.isArray(b) ? b : String(b).trim().split(/\s+/)).map(Number);
   const catBox = (c) => parseBox(W.categories[c].box);
   const boxOf = (it) => parseBox((!isCloud() && demoFits[it.id]) || it.box || W.categories[it.cat].box);
+  const fitsSeason = (it, seasons) => !it.seasons?.length || it.seasons.some((s) => seasons.includes(s));
+  const seasonWord = (s) => (s ? W.seasons[s] : "весь год");
 
   // fit an image of aspect a (w/h) inside box, centred horizontally, pinned to the top
   function fitBox([x, y, w, h], a) {
@@ -48,15 +55,18 @@
     return [x, y, w, w / a];
   }
 
-  function reindex() {
-    byCat = Object.fromEntries(CATS.map((c) => [c, items.filter((i) => i.cat === c)]));
+  // rebuild per-category lists for the season filter, then point every slot at the given item ids
+  function reindex(ids = store.get(curKey(), {})) {
     byId = Object.fromEntries(items.map((i) => [i.id, i]));
-    const saved = store.get(curKey(), {});
-    CATS.forEach((c) => { state.idx[c] = Math.max(0, byCat[c].findIndex((x) => x.id === saved[c])); });
+    byCat = Object.fromEntries(CATS.map((c) => [c, items.filter((i) => i.cat === c && (!state.season || fitsSeason(i, [state.season])))]));
+    CATS.forEach((c) => {
+      const k = byCat[c].findIndex((x) => x.id === ids[c]);
+      state.idx[c] = k >= 0 ? k : (isOpt(c) || !byCat[c].length ? -1 : 0);
+    });
   }
 
   function loadDemo() {
-    items = W.items.map((i) => ({ ...i, id: i.id || i.img }));
+    items = W.items.map((i) => ({ ...i, id: i.id || i.img, seasons: i.seasons || [] }));
     looks = store.get("looks", []);
     modelUrl = W.model; modelPath = null;
   }
@@ -78,11 +88,14 @@
       sb.from("settings").select("*"),
     ]);
     for (const r of [ri, rl, rs]) if (r.error) throw r.error;
+    cloud.needsMigration = ri.data.length > 0 && !("seasons" in ri.data[0]);
     modelPath = rs.data.find((s) => s.key === "model")?.value?.path || null;
     const paths = ri.data.map((r) => r.img_path);
     if (modelPath) paths.push(modelPath);
     const urls = await signUrls(paths);
-    items = ri.data.map((r) => ({ id: r.id, cat: r.cat, name: r.name, img: urls[r.img_path], path: r.img_path, box: r.box }));
+    items = ri.data.map((r) => ({
+      id: r.id, cat: r.cat, name: r.name, img: urls[r.img_path], path: r.img_path, box: r.box, seasons: r.seasons || [],
+    }));
     looks = rl.data.map((r) => ({ ...r.outfit, id: r.id, t: Date.parse(r.created_at) }));
     modelUrl = (modelPath && urls[modelPath]) || W.model;
   }
@@ -99,6 +112,7 @@
     document.body.classList.remove("loading");
     reindex();
     renderAll();
+    if (cloud.needsMigration) toast("обнови базу: выполни migration-2.sql в Supabase");
   }
 
   /* ---------- sound (tiny synth, no files) ---------- */
@@ -127,7 +141,9 @@
   function buildSlot(el) {
     const c = el.dataset.cat;
     el.innerHTML = `
-      <div class="slot-head"><span class="slot-count"></span><button class="slot-del" title="удалить вещь" hidden>✕</button></div>
+      <div class="slot-head"><span class="slot-count"></span><span class="slot-tools">
+        <button class="slot-del slot-edit" title="изменить вещь" hidden>✎</button>
+        <button class="slot-del slot-rm" title="удалить вещь" hidden>✕</button></span></div>
       <div class="slot-img"></div>
       <div class="slot-name"></div>
       <div class="slot-nav">
@@ -138,7 +154,8 @@
       </div>`;
     el.addEventListener("click", (e) => {
       setFocus(c);
-      if (e.target.closest(".slot-del")) return deleteItem(current(c));
+      if (e.target.closest(".slot-rm")) return deleteItem(current(c));
+      if (e.target.closest(".slot-edit")) return openEdit(current(c));
       const b = e.target.closest("[data-step]");
       if (b) step(c, +b.dataset.step);
     });
@@ -146,12 +163,17 @@
 
   function renderSlot(c, anim = true) {
     const el = $(`.board .slot[data-cat="${c}"]`);
+    if (!el) return;
     const list = byCat[c], it = current(c);
-    $(".slot-count", el).textContent = `${W.categories[c].label} ${list.length ? state.idx[c] + 1 : 0}/${list.length}`;
-    $(".slot-del", el).hidden = !(isCloud() && it);
+    $(".slot-count", el).textContent = `${W.categories[c].label} ${it ? state.idx[c] + 1 : "—"}/${list.length}`;
+    $(".slot-rm", el).hidden = $(".slot-edit", el).hidden = !(isCloud() && it);
     const box = $(".slot-img", el);
     if (!it) {
-      box.innerHTML = `<div class="slot-empty">пусто${isCloud() ? "<br>жми «+ вещь»" : ""}</div>`;
+      let msg;
+      if (list.length) msg = `<div class="slot-none">— без —</div>`;
+      else if (state.season && items.some((i) => i.cat === c)) msg = `<div class="slot-empty">нет вещей<br>на ${seasonWord(state.season)}</div>`;
+      else msg = `<div class="slot-empty">пусто${isCloud() ? "<br>жми «+ вещь»" : ""}</div>`;
+      box.innerHTML = msg;
       $(".slot-name", el).textContent = "";
       return;
     }
@@ -167,22 +189,28 @@
     CATS.forEach((c) => renderSlot(c, false));
     renderLookTab();
     if (!$("#lookbook").hidden) renderLookbook();
-    if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true);
+    refreshStage();
+    $("#seasonBtn").textContent = seasonWord(state.season);
     $("#authBtn").hidden = !cloud.sb;
     $("#addBtn").hidden = !cloud.sb;
     $("#authBtn").textContent = isCloud() ? "выход" : "вход";
     $("#tuneModel").hidden = !isCloud();
     $("#dollBtn").hidden = !modelPath;
   }
+  const refreshStage = () => { if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true); };
+
+  // positions a slot can take: optional categories also have "nothing" (-1)
+  const positions = (c) => [...(isOpt(c) ? [-1] : []), ...byCat[c].map((_, i) => i)];
 
   function step(c, d, sound = true) {
-    const n = byCat[c].length;
-    if (!n) return;
-    state.idx[c] = ((state.idx[c] + d) % n + n) % n;
+    const pos = positions(c);
+    if (pos.length < 2) return;
+    const i = Math.max(0, pos.indexOf(state.idx[c]));
+    state.idx[c] = pos[((i + d) % pos.length + pos.length) % pos.length];
     renderSlot(c);
     if (sound) sfx.click();
     saveCurrent();
-    if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true);
+    refreshStage();
   }
 
   function setFocus(c) {
@@ -190,38 +218,190 @@
     $$(".board .slot").forEach((s) => s.classList.toggle("focus", s.dataset.cat === c));
   }
 
+  /* ---------- season filter ---------- */
+  function cycleSeason() {
+    const order = ["", ...SEASONS];
+    setSeason(order[(order.indexOf(state.season) + 1) % order.length]);
+    sfx.click();
+    const n = CATS.reduce((s, c) => s + byCat[c].length, 0);
+    toast(state.season ? `${seasonWord(state.season)}: ${n} вещей` : `весь год: ${n} вещей`);
+  }
+  function setSeason(s) {
+    const keep = outfit();
+    state.season = s;
+    store.set("season", s);
+    reindex(keep);
+    renderAll();
+  }
+
   /* ---------- random: slot-machine spin ---------- */
-  function randomize() {
+  function randomTargets() {
+    return Object.fromEntries(CATS.map((c) => {
+      const n = byCat[c].length;
+      if (!n) return [c, -1];
+      if (isOpt(c) && Math.random() < 0.45) return [c, -1];
+      const choices = byCat[c].map((_, i) => i).filter((i) => n < 2 || i !== state.idx[c]);
+      return [c, rnd(choices)];
+    }));
+  }
+
+  function spin(targets = randomTargets()) {
     if (state.spinning) return;
     state.spinning = true;
+    const spinning = NAV.filter((c) => positions(c).length > 1);
     let done = 0;
     const finish = () => {
       state.spinning = false;
       sfx.land();
       saveCurrent();
-      if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true);
+      refreshStage();
     };
-    CATS.forEach((c, k) => {
-      const n = byCat[c].length;
-      if (n < 2) { done++; return; }
-      let target;
-      do { target = Math.floor(Math.random() * n); } while (target === state.idx[c]);
-      let spins = 7 + k * 4;
+    if (!spinning.length) { CATS.forEach((c) => { state.idx[c] = targets[c]; renderSlot(c); }); return finish(); }
+    spinning.forEach((c, k) => {
+      const pos = positions(c);
+      let spins = 6 + k * 3;
       const t = setInterval(() => {
         if (--spins <= 0) {
           clearInterval(t);
-          state.idx[c] = target;
+          state.idx[c] = targets[c];
           renderSlot(c);
-          if (++done === CATS.length) finish();
+          if (++done === spinning.length) finish();
           return;
         }
-        state.idx[c] = (state.idx[c] + 1) % n;
+        const i = Math.max(0, pos.indexOf(state.idx[c]));
+        state.idx[c] = pos[(i + 1) % pos.length];
         renderSlot(c, false);
         sfx.tick();
       }, 55);
     });
-    if (done === CATS.length) finish();
   }
+
+  /* ---------- weather: «что надеть сегодня» ---------- */
+  const WMO = {
+    0: "ясно", 1: "почти ясно", 2: "переменная облачность", 3: "пасмурно", 45: "туман", 48: "туман",
+    51: "морось", 53: "морось", 55: "морось", 56: "ледяная морось", 57: "ледяная морось",
+    61: "дождь", 63: "дождь", 65: "ливень", 66: "ледяной дождь", 67: "ледяной дождь",
+    71: "снег", 73: "снег", 75: "снегопад", 77: "снежная крупа", 80: "ливень", 81: "ливень", 82: "сильный ливень",
+    85: "снег", 86: "снегопад", 95: "гроза", 96: "гроза с градом", 99: "гроза с градом",
+  };
+  const deg = (t) => `${t > 0 ? "+" : ""}${Math.round(t)}°`;
+  const getJSON = async (url) => {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("сервис погоды не ответил");
+    return r.json();
+  };
+
+  async function placeName(lat, lon) {
+    try {
+      const d = await getJSON(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=ru`);
+      return d.city || d.locality || "";
+    } catch { return ""; }
+  }
+  function geolocate() {
+    return new Promise((res, rej) => {
+      if (!navigator.geolocation) return rej(new Error("нет геолокации"));
+      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, maximumAge: 3600e3 });
+    });
+  }
+  async function findCity(name) {
+    const d = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=ru`);
+    const g = d.results?.[0];
+    if (!g) throw new Error(`не нашла город «${name}»`);
+    return { lat: g.latitude, lon: g.longitude, name: g.name };
+  }
+  async function locate(ask = false) {
+    const saved = store.get("geo", null);
+    if (saved && !ask) return saved;
+    let geo = null;
+    if (ask) {
+      const city = prompt("город для погоды (оставь пустым — по геолокации)", saved?.name || "");
+      if (city === null) return null;
+      if (city.trim()) geo = await findCity(city.trim());
+    }
+    if (!geo) {
+      try {
+        const p = await geolocate();
+        geo = { lat: p.coords.latitude, lon: p.coords.longitude };
+        geo.name = await placeName(geo.lat, geo.lon);
+      } catch {
+        const city = prompt("не получилось определить место. в каком ты городе?", saved?.name || "Москва");
+        if (!city) return null;
+        geo = await findCity(city.trim());
+      }
+    }
+    store.set("geo", geo);
+    return geo;
+  }
+  async function getWeather(g) {
+    const d = await getJSON(
+      `https://api.open-meteo.com/v1/forecast?latitude=${g.lat}&longitude=${g.lon}` +
+      "&current=temperature_2m,apparent_temperature,weather_code" +
+      "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code" +
+      "&timezone=auto&forecast_days=1");
+    return {
+      t: d.current.temperature_2m, feels: d.current.apparent_temperature, code: d.current.weather_code,
+      dcode: d.daily.weather_code[0], tmin: d.daily.temperature_2m_min[0], tmax: d.daily.temperature_2m_max[0],
+      rain: d.daily.precipitation_probability_max[0] ?? 0,
+    };
+  }
+  function weatherPlan(w) {
+    const t = w.feels, codes = [w.code, w.dcode];
+    const wet = w.rain >= 50 || codes.some((c) => (c >= 51 && c <= 67) || (c >= 80 && c <= 82) || c >= 95);
+    const snow = codes.some((c) => (c >= 71 && c <= 77) || c === 85 || c === 86);
+    const seasons = t <= 0 ? ["winter"] : t <= 8 ? ["winter", "autumn", "spring"] : t <= 16 ? ["autumn", "spring"]
+      : t <= 22 ? ["spring", "summer", "autumn"] : ["summer"];
+    return {
+      seasons, wet, snow,
+      outer: t < 16 || wet || snow ? "need" : t > 22 ? "no" : "maybe",
+      hat: t <= 3 || snow ? "need" : "maybe",
+    };
+  }
+  function weatherTargets(p) {
+    return Object.fromEntries(CATS.map((c) => {
+      const list = byCat[c];
+      const ok = list.map((it, i) => [it, i]).filter(([it]) => fitsSeason(it, p.seasons)).map(([, i]) => i);
+      if (isOpt(c)) {
+        const mode = c === "outer" ? p.outer : c === "hat" ? p.hat : "maybe";
+        if (mode === "no" || !ok.length) return [c, -1];
+        if (mode === "maybe" && Math.random() < (c === "hat" ? 0.65 : 0.4)) return [c, -1];
+        // when it's needed (cold / rain), prefer things made for the coldest fitting season
+        const warmest = mode === "need" ? ok.filter((i) => list[i].seasons?.includes(p.seasons[0])) : [];
+        return [c, rnd(warmest.length ? warmest : ok)];
+      }
+      if (!list.length) return [c, -1];
+      return [c, ok.length ? rnd(ok) : Math.floor(Math.random() * list.length)];
+    }));
+  }
+  async function today(askPlace = false) {
+    if (state.spinning) return;
+    try {
+      toast("смотрю погоду…");
+      const g = await locate(askPlace);
+      if (!g) return;
+      const w = await getWeather(g);
+      const p = weatherPlan(w);
+      if (state.season) setSeason("");
+      const targets = weatherTargets(p);
+      const hasOuter = byCat.outer?.some((it) => fitsSeason(it, p.seasons));
+      const advice = [
+        `сегодня ${p.seasons.map((s) => W.seasons[s]).join(" / ")}`,
+        p.outer === "need" ? (hasOuter ? "нужна куртка" : "нужна куртка — добавь верхнюю одежду") : p.outer === "no" ? "можно без куртки" : "куртка по желанию",
+        p.wet && "☂ возьми зонт",
+        p.snow && "❄ снег",
+      ].filter(Boolean).join(" · ");
+      $("#weatherText").innerHTML =
+        `<b>${escapeHtml(g.name || "сейчас")}</b> ${deg(w.t)}, ощущается ${deg(w.feels)}, ${WMO[w.code] || ""}` +
+        ` · днём ${deg(w.tmin)}…${deg(w.tmax)}<br>${escapeHtml(advice)}`;
+      $("#weather").hidden = false;
+      $("#toast").hidden = true;
+      switchTab("board");
+      spin(targets);
+    } catch (e) {
+      console.error(e);
+      toast("погода: " + (e.message || "не получилось"));
+    }
+  }
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
   /* ---------- stage: model + layered clothes, 200×500 coordinate space ---------- */
   function renderStage(el, look, editable = false) {
@@ -251,6 +431,7 @@
     if (!m) return;
     m.hidden = true;
     if (m.id === "tryon") setTuning(false);
+    if (m.id === "addModal") resetAdd();
   }
   const openModalEl = () => $$(".modal").find((m) => !m.hidden);
 
@@ -267,7 +448,7 @@
     $("#tune").hidden = !on;
     $("#tuneBtn").textContent = on ? "готово" : "подогнать";
     updateTuneLabel();
-    if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true);
+    refreshStage();
   }
   function updateTuneLabel() {
     const it = byId[state.sel];
@@ -341,7 +522,7 @@
   $("#stage").addEventListener("pointercancel", endDrag);
 
   /* ---------- lookbook ---------- */
-  const lookKey = (o) => CATS.map((c) => o[c]).join("|");
+  const lookKey = (o) => CATS.map((c) => o[c] || "").join("|");
   async function like() {
     const look = outfit();
     if (!CATS.some((c) => look[c])) return toast("гардероб пока пуст");
@@ -368,6 +549,16 @@
     if (!isCloud()) store.set("looks", looks);
     renderLookbook(); renderLookTab(); sfx.click();
   }
+  function openLook(look) {
+    const ids = Object.fromEntries(CATS.map((c) => [c, look[c] || null]));
+    const hidden = CATS.some((c) => ids[c] && byId[ids[c]] && !byCat[c].some((x) => x.id === ids[c]));
+    if (hidden) { state.season = ""; store.set("season", ""); }
+    reindex(ids);
+    saveCurrent();
+    switchTab("board");
+    renderAll();
+    sfx.land();
+  }
   function renderLookTab() {
     $("#lookTab").textContent = `лукбук · ${looks.length}`;
   }
@@ -388,14 +579,7 @@
       card.insertAdjacentHTML("beforeend", `<div class="look-date">${date}</div><button class="look-del" aria-label="удалить">×</button>`);
       card.addEventListener("click", (e) => {
         if (e.target.closest(".look-del")) return deleteLook(i);
-        CATS.forEach((c) => {
-          const k = byCat[c].findIndex((x) => x.id === look[c]);
-          if (k >= 0) state.idx[c] = k;
-        });
-        saveCurrent();
-        switchTab("board");
-        CATS.forEach((c) => renderSlot(c));
-        sfx.land();
+        openLook(look);
       });
       g.append(card);
     });
@@ -408,16 +592,18 @@
   }
 
   /* ---------- images: resize, background removal, trim ---------- */
-  function loadImg(blob) {
+  function loadImg(src) {
     return new Promise((res, rej) => {
-      const url = URL.createObjectURL(blob);
+      const url = typeof src === "string" ? src : URL.createObjectURL(src);
       const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); res(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("не получилось открыть картинку")); };
+      const done = () => { if (typeof src !== "string") URL.revokeObjectURL(url); };
+      img.onload = () => { done(); res(img); };
+      img.onerror = () => { done(); rej(new Error("не получилось открыть картинку")); };
       img.src = url;
     });
   }
   const toBlob = (canvas, type, q) => new Promise((r) => canvas.toBlob(r, type, q));
+  const imageAspect = async (src) => { const img = await loadImg(src); return img.naturalWidth / img.naturalHeight; };
 
   async function downscale(file, max = 1400) {
     const img = await loadImg(file);
@@ -474,11 +660,6 @@
     return trim(out);
   }
 
-  async function imageAspect(blob) {
-    const img = await loadImg(blob);
-    return img.naturalWidth / img.naturalHeight;
-  }
-
   async function upload(folder, blob) {
     const ext = blob.type === "image/png" ? "png" : "jpg";
     const path = `${folder}/${crypto.randomUUID()}.${ext}`;
@@ -487,13 +668,31 @@
     return path;
   }
 
-  /* ---------- add item ---------- */
-  const add = { orig: null, blob: null, busy: false, token: 0 };
+  const dbError = (e) => {
+    const m = e?.message || String(e);
+    if (/seasons|items_cat_check|check constraint/i.test(m)) return "нужно обновить базу: выполни migration-2.sql в Supabase";
+    return m;
+  };
+
+  /* ---------- add / edit item ---------- */
+  const add = { orig: null, blob: null, busy: false, token: 0, edit: null };
   const addStatus = (t) => { $("#addStatus").textContent = t; };
-  function addPreview(blob) {
+  function buildAddForm() {
+    $("#addCats").innerHTML = CATS.map((c) =>
+      `<label><input type="radio" name="cat" value="${c}"><span>${W.categories[c].short || W.categories[c].label}</span></label>`).join("");
+    $("#addSeasons").innerHTML = SEASONS.map((s) =>
+      `<label><input type="checkbox" value="${s}"><span>${W.seasons[s]}</span></label>`).join("");
+  }
+  const formSeasons = () => $$("#addSeasons input:checked").map((i) => i.value);
+  function setForm(cat, seasons = [], name = "") {
+    $$("#addCats input").forEach((r) => { r.checked = r.value === cat; });
+    $$("#addSeasons input").forEach((i) => { i.checked = seasons.includes(i.value); });
+    $("#addName").value = name;
+  }
+  function addPreview(src) {
     const img = $("#addPreview");
     if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
-    img.src = URL.createObjectURL(blob);
+    img.src = typeof src === "string" ? src : URL.createObjectURL(src);
     img.hidden = false;
     $("#drop").classList.add("has");
   }
@@ -502,15 +701,32 @@
     $("#saveBtn").disabled = on;
   }
   function resetAdd() {
-    add.orig = add.blob = null; add.token++;
-    $("#addFile").value = ""; $("#addName").value = "";
+    add.orig = add.blob = add.edit = null; add.token++;
+    $("#addFile").value = ""; $("#addFile").disabled = false;
     $("#addPreview").hidden = true; $("#drop").classList.remove("has");
+    $("#addBgRow").hidden = false;
+    $("#addTitle").textContent = "новая_вещь.exe";
+    $("#saveBtn").textContent = "в гардероб";
+    setForm("top");
     addStatus(""); addBusy(false);
   }
   function openAdd() {
     if (!cloud.sb) return toast("облако ещё не подключено");
     if (!isCloud()) { toast("сначала войди"); return openModal("authModal"); }
-    $$("#addCats input").forEach((r) => { r.checked = r.value === state.focus; });
+    resetAdd();
+    setForm(state.focus, state.season ? [state.season] : []);
+    openModal("addModal");
+  }
+  function openEdit(it) {
+    if (!it || !isCloud()) return;
+    resetAdd();
+    add.edit = it;
+    $("#addTitle").textContent = "правка.exe";
+    $("#saveBtn").textContent = "сохранить";
+    $("#addFile").disabled = true;
+    $("#addBgRow").hidden = true;
+    addPreview(it.img);
+    setForm(it.cat, it.seasons, it.name);
     openModal("addModal");
   }
   async function processAdd() {
@@ -543,27 +759,56 @@
 
   async function saveItem() {
     if (add.busy) return;
+    if (add.edit) return saveEdit();
     if (!add.blob) return addStatus("сначала выбери фото");
-    const cat = $("#addCats input:checked").value;
+    const cat = $("#addCats input:checked")?.value || "top";
+    const seasons = formSeasons();
     const name = $("#addName").value.trim() || W.categories[cat].label;
     addBusy(true); addStatus("загружаю в облако…");
     try {
       const blob = add.blob;
       const box = fitBox(catBox(cat), await imageAspect(blob)).map((v) => Math.round(v * 10) / 10);
       const path = await upload("items", blob);
-      const { data, error } = await cloud.sb.from("items").insert({ cat, name, img_path: path, box }).select().single();
-      if (error) throw error;
+      const { data, error } = await cloud.sb.from("items").insert({ cat, name, img_path: path, box, seasons }).select().single();
+      if (error) { cloud.sb.storage.from(BUCKET).remove([path]); throw error; }
       const urls = await signUrls([path]);
-      items.push({ id: data.id, cat, name, img: urls[path], path, box });
-      reindex();
-      state.idx[cat] = byCat[cat].length - 1;
+      items.push({ id: data.id, cat, name, img: urls[path], path, box, seasons });
+      const ids = { ...outfit(), [cat]: data.id };
+      if (state.season && !fitsSeason({ seasons }, [state.season])) { state.season = ""; store.set("season", ""); }
+      reindex(ids);
       saveCurrent();
       renderAll(); setFocus(cat);
-      closeModal($("#addModal")); resetAdd();
+      closeModal($("#addModal"));
       sfx.land(); toast("добавлено ✓");
     } catch (e) {
       console.error(e);
-      addStatus("ошибка: " + (e.message || e));
+      addStatus("ошибка: " + dbError(e));
+      addBusy(false);
+    }
+  }
+  async function saveEdit() {
+    const it = add.edit;
+    const cat = $("#addCats input:checked")?.value || it.cat;
+    const seasons = formSeasons();
+    const name = $("#addName").value.trim() || W.categories[cat].label;
+    const patch = { cat, name, seasons };
+    addBusy(true); addStatus("сохраняю…");
+    try {
+      if (cat !== it.cat) patch.box = fitBox(catBox(cat), await imageAspect(it.img)).map((v) => Math.round(v * 10) / 10);
+      const { error } = await cloud.sb.from("items").update(patch).eq("id", it.id);
+      if (error) throw error;
+      Object.assign(it, patch);
+      const ids = outfit();
+      ids[cat] = it.id;
+      if (state.season && !fitsSeason(it, [state.season])) { state.season = ""; store.set("season", ""); }
+      reindex(ids);
+      saveCurrent();
+      renderAll(); setFocus(cat);
+      closeModal($("#addModal"));
+      sfx.land(); toast("сохранено ✓");
+    } catch (e) {
+      console.error(e);
+      addStatus("ошибка: " + dbError(e));
       addBusy(false);
     }
   }
@@ -575,7 +820,7 @@
     if (error) return toast("не удалилось: " + error.message);
     cloud.sb.storage.from(BUCKET).remove([it.path]);
     items = items.filter((x) => x.id !== it.id);
-    reindex(); renderAll(); sfx.click();
+    reindex(outfit()); saveCurrent(); renderAll(); sfx.click();
   }
 
   /* ---------- model photo ---------- */
@@ -637,7 +882,7 @@
   function toast(msg) {
     const t = $("#toast");
     t.textContent = msg; t.hidden = false;
-    clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 2400);
+    clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 2600);
   }
   function applyTheme() {
     if (state.theme) document.body.dataset.theme = state.theme; else delete document.body.dataset.theme;
@@ -651,7 +896,11 @@
   }
 
   const actions = {
-    random: randomize,
+    random: () => spin(),
+    today: () => today(false),
+    city: () => today(true),
+    hideweather: () => { $("#weather").hidden = true; },
+    season: cycleSeason,
     wear: openTryOn,
     like,
     close: (el) => closeModal(el.closest(".modal")),
@@ -697,18 +946,21 @@
       if (k === "+" || k === "=") return scale(1.03);
       if (k === "-") return scale(0.97);
     }
+    const lk = k.toLowerCase();
     if (k === "ArrowUp" || k === "ArrowDown") {
       e.preventDefault();
-      const i = CATS.indexOf(state.focus) + (k === "ArrowUp" ? -1 : 1);
-      setFocus(CATS[(i + CATS.length) % CATS.length]); sfx.click();
+      const i = NAV.indexOf(state.focus) + (k === "ArrowUp" ? -1 : 1);
+      setFocus(NAV[(i + NAV.length) % NAV.length]); sfx.click();
     } else if (k === "ArrowLeft" || k === "ArrowRight") {
       e.preventDefault(); step(state.focus, k === "ArrowLeft" ? -1 : 1);
     } else if (k === " ") {
-      e.preventDefault(); randomize();
+      e.preventDefault(); spin();
     } else if (k === "Enter") {
       e.preventDefault(); modal ? closeModal(modal) : openTryOn();
-    } else if (k.toLowerCase() === "l" || k.toLowerCase() === "д") {
+    } else if (lk === "l" || lk === "д") {
       like();
+    } else if (!modal && (lk === "s" || lk === "ы")) {
+      cycleSeason();
     }
   });
 
@@ -716,9 +968,11 @@
   async function init() {
     document.title = W.title;
     $("#title").textContent = W.title;
-    $("#season").textContent = W.season;
     $("#soundBtn").classList.toggle("on", state.sound);
+    if (!SEASONS.includes(state.season)) state.season = "";
     applyTheme();
+    buildAddForm();
+    resetAdd();
     $$(".board .slot").forEach(buildSlot);
     setFocus("top");
     if (CFG.url && CFG.key && window.supabase) {

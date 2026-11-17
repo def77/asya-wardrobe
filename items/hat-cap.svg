@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="70 12 62 38">
+<path d="M78 38 Q78 16 100 16 Q122 16 122 38 Z" fill="#1f1f22" stroke="#000" stroke-width="1.4"/>
+<path d="M78 36 Q100 44 122 36 L127 42 Q100 52 73 42 Z" fill="#2c2c30" stroke="#000" stroke-width="1.4"/>
+<circle cx="100" cy="17" r="2" fill="#444"/>
+<text x="100" y="32" text-anchor="middle" font-family="Georgia,serif" font-style="italic" font-size="8" fill="#ddd">NY</text>
+</svg>

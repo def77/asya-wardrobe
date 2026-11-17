@@ -2,10 +2,11 @@
 
 create table if not exists public.items (
   id         uuid primary key default gen_random_uuid(),
-  cat        text not null check (cat in ('top', 'bottom', 'shoes', 'bag')),
+  cat        text not null check (cat in ('top', 'bottom', 'shoes', 'bag', 'outer', 'hat', 'jewelry')),
   name       text not null default '',
   img_path   text not null,
   box        float8[],
+  seasons    text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
