@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Гардероб Аси</title>
+<meta name="theme-color" content="#5a1622">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%235a1622'/><path d='M3 5l3-2h4l3 2-2 2v6H5V7z' fill='%23f3ece6'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="frame">
+  <div class="screen">
+    <header class="bar">
+      <span class="bar-title" id="title">гардероб</span>
+      <span class="bar-season" id="season"></span>
+      <nav class="bar-menu">
+        <button data-act="theme">клетка</button>
+        <button data-act="sound" id="soundBtn">звук</button>
+        <button data-act="full">экран</button>
+      </nav>
+    </header>
+
+    <main class="board" id="board">
+      <section class="col col-side">
+        <div class="slot" data-cat="shoes"></div>
+        <button class="big" data-act="like">♥ в лукбук</button>
+      </section>
+      <section class="col col-mid">
+        <div class="slot slot-wide" data-cat="top"></div>
+        <div class="slot slot-wide" data-cat="bottom"></div>
+      </section>
+      <section class="col col-side">
+        <div class="slot" data-cat="bag"></div>
+        <button class="big big-blue" data-act="random">рандом</button>
+        <button class="big" data-act="wear">надень меня</button>
+      </section>
+    </main>
+
+    <section class="lookbook" id="lookbook" hidden>
+      <div class="lookbook-grid" id="lookbookGrid"></div>
+    </section>
+
+    <footer class="tabs">
+      <button class="tab on" data-tab="board">гардероб</button>
+      <button class="tab" data-tab="lookbook" id="lookTab">лукбук</button>
+    </footer>
+  </div>
+  <div class="hint">
+    <span>примерочная-95</span>
+    <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк</span>
+  </div>
+</div>
+
+<div class="modal" id="tryon" hidden>
+  <div class="win">
+    <div class="win-bar"><span>примерочная.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
+    <div class="win-body">
+      <div class="stage" id="stage"></div>
+      <div class="tune" id="tune" hidden>
+        <p class="tune-label" id="tuneLabel">тапни вещь, потом двигай пальцем</p>
+        <div class="tune-pad">
+          <button data-nudge="0,-2">↑</button>
+          <button data-nudge="-2,0">←</button>
+          <button data-nudge="2,0">→</button>
+          <button data-nudge="0,2">↓</button>
+          <button data-scale="0.95">−</button>
+          <button data-scale="1.05">+</button>
+          <button data-act="resetfit">сброс</button>
+        </div>
+      </div>
+      <div class="win-actions">
+        <button class="big" data-act="tune" id="tuneBtn">подогнать</button>
+        <button class="big" data-act="like">♥ в лукбук</button>
+        <button class="big big-blue" data-act="random">рандом</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="wardrobe.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
