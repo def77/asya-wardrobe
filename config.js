@@ -7,6 +7,6 @@
   Пока поля пустые, сайт работает в демо-режиме с вещами-заглушками.
 */
 window.CLOUD = {
-  url: "",
-  key: "",
+  url: "https://torniujpwjcmgaqywgzx.supabase.co",
+  key: "sb_publishable_TjECQCZSa68PkGp2E0Gjew_RDJoRVFa",
 };
