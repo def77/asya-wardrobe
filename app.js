@@ -36,6 +36,7 @@
     sound: store.get("sound", true),
     theme: store.get("theme", ""),
     view: store.get("view", "doll"),
+    closetSel: null,
     collageVariant: store.get("collageVariant", 0),
     arranging: false,
     colSel: null,
@@ -254,6 +255,7 @@
     $("#tuneModel").hidden = !isCloud();
     $("#dollBtn").hidden = !modelPath;
     updatePalette();
+    if (!$("#closet").hidden) renderCloset();
   }
   const refreshStage = () => {
     if ($("#tryon").hidden) return;
@@ -1050,9 +1052,77 @@
   function switchTab(tab) {
     $("#board").hidden = tab !== "board";
     $("#lookbook").hidden = tab !== "lookbook";
+    $("#closet").hidden = tab !== "closet";
     $$(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === tab));
     if (tab === "lookbook") renderLookbook();
+    if (tab === "closet") { openCloset(); renderCloset(); }
   }
+
+  /* ---------- closet: every item, pick what to wear ---------- */
+  const CLOSET_ORDER = ["top", "bottom", "dress", "outer", "hat", "shoes", "bag", "jewelry"].filter((c) => CATS.includes(c));
+  function openCloset() {
+    state.closetSel = outfit(); // start from what's on now
+  }
+  function closetPick(id) {
+    const it = byId[id]; if (!it) return;
+    const sel = state.closetSel, c = it.cat;
+    if (sel[c] === id) sel[c] = null; // tap again = take off
+    else {
+      sel[c] = id;
+      if (c === "dress") SEPARATES.forEach((x) => { sel[x] = null; }); // a dress replaces top + bottom
+      if (SEPARATES.includes(c)) sel.dress = null;
+    }
+    sfx.click();
+    renderCloset();
+  }
+  function renderCloset() {
+    const sel = state.closetSel || {};
+    const g = $("#closetGroups");
+    const groups = CLOSET_ORDER.map((c) => {
+      const list = items.filter((i) => i.cat === c);
+      const cards = list.map((it) => `
+        <div class="ccard${sel[c] === it.id ? " on" : ""}" data-id="${escapeHtml(it.id)}" role="button" tabindex="0">
+          ${isCloud() ? `<button class="ccard-edit" data-edit="${escapeHtml(it.id)}" title="изменить">✎</button>` : ""}
+          <img src="${escapeHtml(it.img)}" alt="" loading="lazy">
+          <span class="ccard-name">${escapeHtml(it.name)}</span>
+          <span class="ccard-meta">${swatches(it.colors)}${(it.seasons || []).map((s) => W.seasons[s]).join(" · ") || "всесезон."}</span>
+        </div>`).join("");
+      return `<div class="closet-group"><h3>${W.categories[c].label} <small>${list.length}</small></h3>
+        <div class="closet-grid">${cards || `<div class="closet-empty">пусто${isCloud() ? " — жми «+ вещь»" : ""}</div>`}</div></div>`;
+    }).join("");
+    g.innerHTML = groups;
+    const chosen = CATS.map((c) => byId[sel[c]]).filter(Boolean);
+    const a = COLORS.analyze(chosen);
+    $("#closetInfo").innerHTML = chosen.length
+      ? `выбрано: ${chosen.length}${a.label ? ` · <b>${escapeHtml(a.label)}</b> ${swatches(a.palette.map((p) => p.id))}` : ""}`
+      : "тапни вещи, которые хочешь надеть";
+  }
+  function closetWear() {
+    const sel = { ...state.closetSel };
+    if (!CATS.some((c) => sel[c])) return toast("сначала выбери вещи");
+    const now = outfit();
+    // required things that weren't picked stay as they were (unless a dress is on)
+    CATS.forEach((c) => {
+      if (sel[c] || isOpt(c)) return;
+      if (SEPARATES.includes(c) && sel.dress) return;
+      sel[c] = now[c];
+    });
+    if (CATS.some((c) => sel[c] && !byCat[c].some((x) => x.id === sel[c]))) { state.season = ""; store.set("season", ""); }
+    reindex(sel);
+    if (sel.dress) SEPARATES.forEach((c) => { state.idx[c] = -1; });
+    else SEPARATES.forEach((c) => { if (!sel[c]) state.idx[c] = byCat[c].length ? state.idx[c] : -1; });
+    saveCurrent();
+    switchTab("board");
+    renderAll();
+    openTryOn();
+  }
+  $("#closetGroups").addEventListener("click", (e) => {
+    const ed = e.target.closest("[data-edit]");
+    if (ed) { e.stopPropagation(); return openEdit(byId[ed.dataset.edit]); }
+    const card = e.target.closest(".ccard");
+    if (card) closetPick(card.dataset.id);
+  });
+
 
   /* ---------- images: resize, background removal, trim ---------- */
   function loadImg(src) {
@@ -1304,11 +1374,10 @@
     add.edit = it;
     $("#addTitle").textContent = "правка.exe";
     $("#saveBtn").textContent = "сохранить";
-    $("#addFile").disabled = true;
-    $("#addBgRow").hidden = true;
     addPreview(it.img);
     setForm(it.cat, it.seasons, it.name);
     add.colors = (it.colors || []).slice(); add.colorsTouched = true; renderColorChips();
+    addStatus("чтобы заменить фото — нажми на него");
     openModal("addModal");
   }
   async function processAdd() {
@@ -1331,6 +1400,7 @@
   }
   $("#addFile").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
+    if (add.edit) add.colorsTouched = false; // a new photo → work the colours out again
     try {
       add.canvas = await toCanvas(f);
       add.orig = await plainBlob(add.canvas);
@@ -1379,12 +1449,27 @@
     const name = $("#addName").value.trim() || W.categories[cat].label;
     const patch = { cat, name, seasons, colors: tidyColors(cat, add.colors) };
     addBusy(true); addStatus("сохраняю…");
+    let newPath = null;
     try {
-      if (cat !== it.cat) patch.box = smartBox(cat, await imageAspect(it.img));
+      if (add.blob) {
+        // replaced photo: upload it first, swap paths only once the database agrees
+        addStatus("загружаю новое фото…");
+        newPath = await upload("items", add.blob);
+        patch.img_path = newPath;
+        patch.box = smartBox(cat, await imageAspect(add.blob));
+      } else if (cat !== it.cat) patch.box = smartBox(cat, await imageAspect(it.img));
       const keep = { ...patch };
       const { error } = await writeItem("update", patch, it.id);
       if (error) throw error;
+      delete keep.img_path;
       Object.assign(it, keep);
+      if (newPath) {
+        const old = it.path;
+        it.path = newPath;
+        it.img = (await signUrls([newPath]))[newPath];
+        if (old) cloud.sb.storage.from(BUCKET).remove([old]);
+        newPath = null;
+      }
       const ids = outfit();
       ids[cat] = it.id;
       if (state.season && !fitsSeason(it, [state.season])) { state.season = ""; store.set("season", ""); }
@@ -1395,6 +1480,7 @@
       sfx.land(); toast("сохранено ✓");
     } catch (e) {
       console.error(e);
+      if (newPath) cloud.sb.storage.from(BUCKET).remove([newPath]);
       addStatus("ошибка: " + dbError(e));
       addBusy(false);
     }
@@ -1506,6 +1592,8 @@
       $("#soundBtn").classList.toggle("on", state.sound); sfx.click();
     },
     full: toggleFull,
+    closetwear: closetWear,
+    closetclear: () => { state.closetSel = Object.fromEntries(CATS.map((c) => [c, null])); sfx.click(); renderCloset(); },
     autolook: () => autoLookbook(),
     hidepalette: () => { store.set("paletteHidden", true); $("#palette").hidden = true; },
     export: exportCollage,
