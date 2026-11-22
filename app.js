@@ -115,7 +115,7 @@
   }
 
   function loadDemo() {
-    items = W.items.map((i) => ({ ...i, id: i.id || i.img, seasons: i.seasons || [] }));
+    items = W.items.map((i) => ({ ...i, id: i.id || i.img, seasons: i.seasons || [], colors: i.colors || [] }));
     looks = store.get("looks", []);
     modelUrl = W.model; modelPath = null;
   }
@@ -144,6 +144,7 @@
     const urls = await signUrls(paths);
     items = ri.data.map((r) => ({
       id: r.id, cat: r.cat, name: r.name, img: urls[r.img_path], path: r.img_path, box: r.box, seasons: r.seasons || [],
+      colors: r.colors || [],
     }));
     looks = rl.data.map((r) => ({ ...r.outfit, id: r.id, t: Date.parse(r.created_at) }));
     modelUrl = (modelPath && urls[modelPath]) || W.model;
@@ -166,6 +167,7 @@
     document.body.classList.remove("loading");
     reindex();
     renderAll();
+    fillColors();
     if (cloud.needsMigration) toast("обнови базу: выполни migration-3.sql в Supabase");
   }
 
@@ -219,7 +221,7 @@
     const el = $(`.board .slot[data-cat="${c}"]`);
     if (!el) return;
     const list = byCat[c], it = current(c);
-    $(".slot-count", el).textContent = `${W.categories[c].label} ${it ? state.idx[c] + 1 : "—"}/${list.length}`;
+    $(".slot-count", el).innerHTML = `${W.categories[c].label} ${it ? state.idx[c] + 1 : "—"}/${list.length}` + swatches(it?.colors);
     $(".slot-rm", el).hidden = $(".slot-edit", el).hidden = !(isCloud() && it);
     const box = $(".slot-img", el);
     if (!it) {
@@ -251,6 +253,7 @@
     $("#authBtn").textContent = isCloud() ? "выход" : "вход";
     $("#tuneModel").hidden = !isCloud();
     $("#dollBtn").hidden = !modelPath;
+    updatePalette();
   }
   const refreshStage = () => {
     if ($("#tryon").hidden) return;
@@ -280,6 +283,7 @@
     if (sound) sfx.click();
     saveCurrent();
     refreshStage();
+    updatePalette();
   }
 
   function setFocus(c) {
@@ -326,14 +330,17 @@
     return t;
   }
 
-  function spin(targets = randomTargets()) {
+  function spin(pick) {
     if (state.spinning) return;
+    pick = pick || harmonious(randomTargets);
+    const targets = pick.t;
     state.spinning = true;
     const spinning = NAV.filter((c) => positions(c).length > 1);
     let done = 0;
     const finish = () => {
       state.spinning = false;
       CATS.forEach((c) => renderSlot(c, false));
+      updatePalette(true);
       sfx.land();
       saveCurrent();
       refreshStage();
@@ -356,6 +363,102 @@
         sfx.tick();
       }, 55);
     });
+  }
+
+
+  /* ---------- colours: harmony by the colour rules (colors.js) ---------- */
+  const swatches = (ids) => (ids || []).filter((c) => COLORS.BY[c])
+    .map((c) => `<i class="sw" style="background:${COLORS.BY[c].hex}" title="${COLORS.BY[c].name}"></i>`).join("");
+  // jewellery: yellowish → gold, greyish → silver
+  const METAL = { mustard: "gold", yellow: "gold", sand: "gold", beige: "gold", brown: "gold", grey: "silver", graphite: "silver" };
+  const tidyColors = (cat, cols) => [...new Set((cols || []).map((c) => (cat === "jewelry" && METAL[c]) || c))];
+  const targetItems = (t) => CATS.map((c) => (t[c] >= 0 ? byCat[c][t[c]] : null)).filter(Boolean);
+  const targetKey = (t) => CATS.map((c) => t[c]).join(",");
+
+  // try many outfits from `make`, keep the best-matching by colour rules (with a little randomness)
+  function harmonious(make, tries = 260) {
+    const seen = new Set(), cands = [];
+    for (let i = 0; i < tries; i++) {
+      const t = make(), k = targetKey(t);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      cands.push({ t, a: COLORS.analyze(targetItems(t)) });
+    }
+    cands.sort((x, y) => y.a.score - x.a.score);
+    return rnd(cands.slice(0, Math.max(1, Math.min(5, Math.ceil(cands.length * 0.04)))));
+  }
+
+  // line under the top bar: scheme + palette of the outfit on screen
+  function updatePalette(show) {
+    if (show) store.set("paletteHidden", false);
+    const bar = $("#palette");
+    const a = COLORS.analyze(CATS.map((c) => current(c)).filter(Boolean));
+    if (!a.label || store.get("paletteHidden", false)) { bar.hidden = true; return; }
+    const total = a.palette.reduce((s, p) => s + p.share, 0) || 1;
+    $("#paletteText").innerHTML = `<b>${escapeHtml(a.label)}</b> ` + a.palette.slice(0, 4)
+      .map((p) => `<span class="pal">${swatches([p.id])}${COLORS.BY[p.id].name} ${Math.round((p.share / total) * 100)}%</span>`).join(" ");
+    bar.hidden = false;
+  }
+
+  // a handful of different, well-matched outfits straight into the lookbook
+  async function autoLookbook(n = 6) {
+    const pool = [];
+    const seen = new Set(looks.map((l) => lookKey(l)));
+    for (let i = 0; i < 1800; i++) {
+      const t = randomTargets(), look = Object.fromEntries(CATS.map((c) => [c, t[c] >= 0 ? byCat[c][t[c]].id : null]));
+      const k = lookKey(look);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const a = COLORS.analyze(targetItems(t));
+      if (a.scheme && a.scheme !== "clash" && a.score >= 3) pool.push({ look, a });
+    }
+    if (!pool.length) return toast(items.some((i) => i.colors?.length) ? "не нашлось удачных сочетаний — добавь вещей" : "у вещей пока не определены цвета");
+    pool.sort((x, y) => y.a.score - x.a.score);
+    const usedScheme = {}, usedItem = {}, chosen = [];
+    const BIG = ["outer", "top", "bottom", "dress"];
+    while (chosen.length < n && pool.length) {
+      let best = -1, bestV = -Infinity;
+      pool.slice(0, 300).forEach((p, i) => {
+        const v = p.a.score - 2.5 * (usedScheme[p.a.scheme] || 0) -
+          1.5 * BIG.reduce((s, c) => s + (p.look[c] ? usedItem[p.look[c]] || 0 : 0), 0) + Math.random() * 0.8;
+        if (v > bestV) { bestV = v; best = i; }
+      });
+      const p = pool.splice(best, 1)[0];
+      chosen.push(p);
+      usedScheme[p.a.scheme] = (usedScheme[p.a.scheme] || 0) + 1;
+      BIG.forEach((c) => { if (p.look[c]) usedItem[p.look[c]] = (usedItem[p.look[c]] || 0) + 1; });
+    }
+    toast("собираю лукбук…");
+    for (const p of chosen.reverse()) {
+      const look = { ...p.look, scheme: p.a.label };
+      if (isCloud()) {
+        const { data, error } = await cloud.sb.from("looks").insert({ outfit: look }).select().single();
+        if (error) { toast("не сохранилось: " + error.message); break; }
+        looks.unshift({ ...look, id: data.id, t: Date.parse(data.created_at) });
+      } else {
+        looks.unshift({ ...look, t: Date.now() });
+      }
+    }
+    if (!isCloud()) store.set("looks", looks);
+    renderLookTab(); renderLookbook(); sfx.like();
+    toast(`✨ +${chosen.length} образов в лукбуке`);
+  }
+
+  // work out colours for things that don't have them yet (and remember them in the cloud)
+  let filling = false;
+  async function fillColors() {
+    if (filling) return;
+    filling = true;
+    const todo = items.filter((it) => !it.colors?.length && it.img);
+    for (const it of todo) {
+      try { it.colors = tidyColors(it.cat, await COLORS.detect(it.img)); } catch (e) { console.error(e); continue; }
+      if (isCloud() && it.path && it.colors.length && !cloud.noColors) {
+        const { error } = await cloud.sb.from("items").update({ colors: it.colors }).eq("id", it.id);
+        if (error && /colors/i.test(error.message)) cloud.noColors = true;
+      }
+    }
+    filling = false;
+    if (todo.length) { CATS.forEach((c) => renderSlot(c, false)); updatePalette(); }
   }
 
   /* ---------- weather: «что надеть сегодня» ---------- */
@@ -466,7 +569,6 @@
       const w = await getWeather(g);
       const p = weatherPlan(w);
       if (state.season) setSeason("");
-      const targets = weatherTargets(p);
       const hasOuter = byCat.outer?.some((it) => fitsSeason(it, p.seasons));
       const advice = [
         `сегодня ${p.seasons.map((s) => W.seasons[s]).join(" / ")}`,
@@ -480,7 +582,7 @@
       $("#weather").hidden = false;
       $("#toast").hidden = true;
       switchTab("board");
-      spin(targets);
+      spin(harmonious(() => weatherTargets(p)));
     } catch (e) {
       console.error(e);
       toast("погода: " + (e.message || "не получилось"));
@@ -932,7 +1034,12 @@
       renderLookPreview(st, look);
       const date = new Date(look.t).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
       card.append(st);
-      card.insertAdjacentHTML("beforeend", `<div class="look-date">${date}</div><button class="look-del" aria-label="удалить">×</button>`);
+      const an = COLORS.analyze(CATS.map((c) => byId[look[c]]).filter(Boolean));
+      const label = look.scheme || an.label;
+      card.insertAdjacentHTML("beforeend",
+        `<div class="look-date">${date}${swatches(an.palette.map((p) => p.id))}</div>` +
+        (label ? `<div class="look-scheme">${escapeHtml(label)}</div>` : "") +
+        `<button class="look-del" aria-label="удалить">×</button>`);
       card.addEventListener("click", (e) => {
         if (e.target.closest(".look-del")) return deleteLook(i);
         openLook(look);
@@ -1101,21 +1208,60 @@
   }
 
   const missingSeasons = (e) => /seasons/i.test(e?.message || "") || e?.code === "42703" || e?.code === "PGRST204";
+  // which of the given optional columns the database says it doesn't have
+  const missingCols = (e, cols) => cols.filter((c) => new RegExp(`'${c}'|\\b${c}\\b`, "i").test(e?.message || ""));
+  // insert / update, dropping optional columns the database doesn't have yet
+  async function writeItem(op, row, id) {
+    for (let tries = 0; tries < 3; tries++) {
+      const q = op === "insert" ? cloud.sb.from("items").insert(row).select().single() : cloud.sb.from("items").update(row).eq("id", id);
+      const res = await q;
+      if (!res.error) return res;
+      const gone = missingCols(res.error, ["seasons", "colors"]).filter((c) => c in row);
+      if (!gone.length) return res;
+      gone.forEach((c) => delete row[c]);
+      setTimeout(() => toast("часть данных не сохранилась: обнови базу (migration-4.sql)"), 2700);
+    }
+    return { error: { message: "не получилось сохранить" } };
+  }
   const dbError = (e) => {
     const m = e?.message || String(e);
-    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-3.sql). (${m})`;
-    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-3.sql). (${m})`;
+    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-4.sql). (${m})`;
+    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-4.sql). (${m})`;
     return m;
   };
 
   /* ---------- add / edit item ---------- */
-  const add = { orig: null, canvas: null, blob: null, busy: false, token: 0, edit: null };
+  const add = { orig: null, canvas: null, blob: null, busy: false, token: 0, edit: null, colors: [], colorsTouched: false };
   const addStatus = (t) => { $("#addStatus").textContent = t; };
   function buildAddForm() {
     $("#addCats").innerHTML = CATS.map((c) =>
       `<label><input type="radio" name="cat" value="${c}"><span>${W.categories[c].short || W.categories[c].label}</span></label>`).join("");
     $("#addSeasons").innerHTML = SEASONS.map((s) =>
       `<label><input type="checkbox" value="${s}"><span>${W.seasons[s]}</span></label>`).join("");
+    $("#addColors").innerHTML = COLORS.PALETTE.map((c) =>
+      `<button type="button" class="chip" data-color="${c.id}" title="${c.name}"><i style="background:${c.hex}"></i><span>${c.name}</span></button>`).join("");
+    $("#addColors").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-color]"); if (!b) return;
+      const id = b.dataset.color;
+      add.colors = add.colors.includes(id) ? add.colors.filter((x) => x !== id) : [...add.colors, id];
+      add.colorsTouched = true;
+      renderColorChips();
+    });
+  }
+  function renderColorChips() {
+    $$("#addColors .chip").forEach((b) => {
+      const i = add.colors.indexOf(b.dataset.color);
+      b.classList.toggle("on", i >= 0);
+      b.classList.toggle("main", i === 0);
+    });
+    $("#addColorsNote").textContent = add.colors.length
+      ? `главный: ${COLORS.BY[add.colors[0]].name}${add.colors.length > 1 ? " · ещё: " + add.colors.slice(1).map((c) => COLORS.BY[c].name).join(", ") : ""}`
+      : "не выбран";
+  }
+  async function autoColors(src) {
+    if (add.colorsTouched) return;
+    try { add.colors = await COLORS.detect(src); } catch (e) { console.error(e); }
+    renderColorChips();
   }
   const formSeasons = () => $$("#addSeasons input:checked").map((i) => i.value);
   function setForm(cat, seasons = [], name = "") {
@@ -1141,6 +1287,7 @@
     $("#addBgRow").hidden = false;
     $("#addTitle").textContent = "новая_вещь.exe";
     $("#saveBtn").textContent = "в гардероб";
+    add.colors = []; add.colorsTouched = false; renderColorChips();
     setForm("top");
     addStatus(""); addBusy(false);
   }
@@ -1161,21 +1308,22 @@
     $("#addBgRow").hidden = true;
     addPreview(it.img);
     setForm(it.cat, it.seasons, it.name);
+    add.colors = (it.colors || []).slice(); add.colorsTouched = true; renderColorChips();
     openModal("addModal");
   }
   async function processAdd() {
     if (!add.orig) return;
     const token = ++add.token;
-    if (!$("#addBg").checked) { add.blob = add.orig; addPreview(add.orig); addBusy(false); return addStatus(""); }
+    if (!$("#addBg").checked) { add.blob = add.orig; addPreview(add.orig); addBusy(false); autoColors(add.orig); return addStatus(""); }
     addBusy(true);
     try {
       const { blob, how } = await cutout(add.canvas, (t) => token === add.token && addStatus(t));
       if (token !== add.token) return;
-      add.blob = blob; addPreview(blob); addStatus(how);
+      add.blob = blob; addPreview(blob); addStatus(how); autoColors(blob);
     } catch (e) {
       console.error(e);
       if (token !== add.token) return;
-      add.blob = add.orig; addPreview(add.orig);
+      add.blob = add.orig; addPreview(add.orig); autoColors(add.orig);
       addStatus(`фон убрать не вышло (${e.message || e}), сохраню как есть. Совет: на айфоне в «Фото» зажми вещь → «Поделиться» → сохрани, фон уберётся сам`);
     } finally {
       if (token === add.token) addBusy(false);
@@ -1204,17 +1352,13 @@
       const blob = add.blob;
       const box = smartBox(cat, await imageAspect(blob));
       const path = await upload("items", blob);
-      const row = { cat, name, img_path: path, box, seasons };
-      let { data, error } = await cloud.sb.from("items").insert(row).select().single();
-      if (error && missingSeasons(error)) {
-        // database not migrated yet: save without seasons rather than lose the photo
-        delete row.seasons;
-        ({ data, error } = await cloud.sb.from("items").insert(row).select().single());
-        if (!error) setTimeout(() => toast("сезоны не сохранились: обнови базу (migration-3.sql)"), 2700);
-      }
+      const colors = tidyColors(cat, add.colors);
+      const row = { cat, name, img_path: path, box, seasons, colors };
+      // database not migrated yet: save without the newer fields rather than lose the photo
+      const { data, error } = await writeItem("insert", row);
       if (error) { cloud.sb.storage.from(BUCKET).remove([path]); throw error; }
       const urls = await signUrls([path]);
-      items.push({ id: data.id, cat, name, img: urls[path], path, box, seasons });
+      items.push({ id: data.id, cat, name, img: urls[path], path, box, seasons, colors });
       const ids = { ...outfit(), [cat]: data.id };
       if (state.season && !fitsSeason({ seasons }, [state.season])) { state.season = ""; store.set("season", ""); }
       reindex(ids);
@@ -1233,13 +1377,14 @@
     const cat = $("#addCats input:checked")?.value || it.cat;
     const seasons = formSeasons();
     const name = $("#addName").value.trim() || W.categories[cat].label;
-    const patch = { cat, name, seasons };
+    const patch = { cat, name, seasons, colors: tidyColors(cat, add.colors) };
     addBusy(true); addStatus("сохраняю…");
     try {
       if (cat !== it.cat) patch.box = smartBox(cat, await imageAspect(it.img));
-      const { error } = await cloud.sb.from("items").update(patch).eq("id", it.id);
+      const keep = { ...patch };
+      const { error } = await writeItem("update", patch, it.id);
       if (error) throw error;
-      Object.assign(it, patch);
+      Object.assign(it, keep);
       const ids = outfit();
       ids[cat] = it.id;
       if (state.season && !fitsSeason(it, [state.season])) { state.season = ""; store.set("season", ""); }
@@ -1361,6 +1506,8 @@
       $("#soundBtn").classList.toggle("on", state.sound); sfx.click();
     },
     full: toggleFull,
+    autolook: () => autoLookbook(),
+    hidepalette: () => { store.set("paletteHidden", true); $("#palette").hidden = true; },
     export: exportCollage,
     relayout: () => {
       // a new automatic layout replaces any hand-made one for this outfit

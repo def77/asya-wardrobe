@@ -7,6 +7,7 @@ create table if not exists public.items (
   img_path   text not null,
   box        float8[],
   seasons    text[] not null default '{}',
+  colors     text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 

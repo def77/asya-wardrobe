@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <div class="frame">
@@ -32,6 +32,11 @@
       <span class="weather-text" id="weatherText"></span>
       <button class="weather-btn" data-act="city" title="сменить город">📍</button>
       <button class="weather-btn" data-act="hideweather" aria-label="скрыть">×</button>
+    </div>
+
+    <div class="palette" id="palette" hidden>
+      <span class="palette-text" id="paletteText"></span>
+      <button class="weather-btn" data-act="hidepalette" aria-label="скрыть">×</button>
     </div>
 
     <main class="board" id="board">
@@ -58,6 +63,9 @@
     </main>
 
     <section class="lookbook" id="lookbook" hidden>
+      <div class="lookbook-tools">
+        <button class="big big-sun" data-act="autolook">✨ собрать лукбук по цветам</button>
+      </div>
       <div class="lookbook-grid" id="lookbookGrid"></div>
     </section>
 
@@ -67,7 +75,7 @@
     </footer>
   </div>
   <div class="hint">
-    <span>примерочная-95 · v10</span>
+    <span>примерочная-95 · v11</span>
     <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк · S — сезон</span>
   </div>
 </div>
@@ -139,6 +147,8 @@
       <div class="cats" id="addCats"></div>
       <p class="field-label">сезон <small>(ничего не выбрано = всесезонная)</small></p>
       <div class="cats cats-4" id="addSeasons"></div>
+      <p class="field-label">цвет <small id="addColorsNote">не выбран</small></p>
+      <div class="colors" id="addColors"></div>
       <input class="field" id="addName" placeholder="название, например «серый свитер»" maxlength="60" autocomplete="off">
       <button class="big big-blue" data-act="save" id="saveBtn">в гардероб</button>
     </div>
@@ -159,9 +169,10 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/supabase.js?v=10"></script>
-<script src="config.js?v=10"></script>
-<script src="wardrobe.js?v=10"></script>
-<script src="app.js?v=10"></script>
+<script src="vendor/supabase.js?v=11"></script>
+<script src="config.js?v=11"></script>
+<script src="wardrobe.js?v=11"></script>
+<script src="colors.js?v=11"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
