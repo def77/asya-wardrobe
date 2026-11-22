@@ -37,6 +37,8 @@
     theme: store.get("theme", ""),
     view: store.get("view", "doll"),
     collageVariant: store.get("collageVariant", 0),
+    arranging: false,
+    colSel: null,
     tuning: false,
     sel: null,
     spinning: false,
@@ -252,7 +254,7 @@
   }
   const refreshStage = () => {
     if ($("#tryon").hidden) return;
-    if (state.view === "collage") renderCollage($("#collage"), outfit()); else renderStage($("#stage"), outfit(), true);
+    if (state.view === "collage") renderCurrentCollage(); else renderStage($("#stage"), outfit(), true);
   };
 
   // positions a slot can take: optional categories also have "nothing" (-1)
@@ -513,7 +515,7 @@
   function closeModal(m) {
     if (!m) return;
     m.hidden = true;
-    if (m.id === "tryon") setTuning(false);
+    if (m.id === "tryon") { setTuning(false); setArranging(false); }
     if (m.id === "addModal") resetAdd();
   }
   const openModalEl = () => $$(".modal").find((m) => !m.hidden);
@@ -527,38 +529,46 @@
   function collageLayout(look, variant = 0) {
     const has = (c) => !!(look[c] && byId[look[c]]);
     const dress = has("dress");
-    let L = ["outer", dress ? null : "top", "shoes"].filter((c) => c && has(c));
-    let R = ["hat", "bag", dress ? "dress" : "bottom", "jewelry"].filter((c) => has(c));
-    if (variant & 2 && L.includes("shoes") && R.includes("bag")) {
-      // swap shoes and bag between the columns
-      L = L.map((c) => (c === "shoes" ? "bag" : c));
-      R = R.filter((c) => c !== "bag").concat("shoes");
-    }
+    // body order: what's higher on the body goes higher on the board
+    const ORDER = ["hat", "outer", "top", "jewelry", "bag", "dress", "bottom", "shoes"];
+    const SMALL = ["hat", "jewelry", "bag", "shoes"]; // only these may change columns
+    const LOWER = ["dress", "bottom", "shoes"];        // these sit at the bottom of their column
+    const byBody = (a) => a.sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y));
+    // left: upper-body clothes; right: accessories on top, bottoms / dress / shoes at the bottom
+    let L = ["hat", "outer", dress ? null : "top"].filter((c) => c && has(c));
+    let R = ["jewelry", "bag", dress ? "dress" : "bottom", "shoes"].filter((c) => has(c));
+    if (variant & 2 && R.includes("shoes")) { R = R.filter((c) => c !== "shoes"); L.push("shoes"); }
     // short bottoms (skirts, shorts) take less room than trousers
     const bottomBox = has("bottom") ? boxOf(byId[look.bottom]) : null;
     const wt = (c) => (c === "bottom" && bottomBox && bottomBox[3] < 220 ? 1.05 : WEIGHT[c]);
     const sum = (a) => a.reduce((s, c) => s + wt(c), 0);
-    // balance the two columns by moving small items across
+    // balance the columns with small things only; clothes stay where they belong
     for (let guard = 0; guard < 4; guard++) {
       const d = sum(L) - sum(R);
-      if (d > 1.1) {
-        const c = L.find((x) => wt(x) < 0.8) || L[L.length - 1];
-        L = L.filter((x) => x !== c); R.push(c);
-      } else if (d < -1.1) {
-        const c = R.find((x) => wt(x) < 0.8) || R[0];
-        R = R.filter((x) => x !== c); L.push(c);
-      } else break;
+      const from = d > 1.1 ? L : d < -1.1 ? R : null;
+      if (!from) break;
+      const pick = ["jewelry", "hat", "bag", "shoes"].find((c) => from.includes(c));
+      if (!pick || from.length === 1) break;
+      if (from === L) { L = L.filter((c) => c !== pick); R.push(pick); }
+      else { R = R.filter((c) => c !== pick); L.push(pick); }
     }
+    byBody(L); byBody(R);
+    if (!L.length) [L, R] = [R, []];
     const cols = [L, R].filter((a) => a.length);
     const X = cols.length === 2 ? [[0.04, 0.47], [0.51, 0.45]] : [[0.2, 0.6]];
     const PAD = 0.035, GAP = 0.02, out = [];
+    // one scale for both columns so things keep comparable sizes
+    const avail = (col) => 1 - 2 * PAD - GAP * (col.length - 1);
+    const unit = Math.min(...cols.map((col) => avail(col) / sum(col)));
     cols.forEach((col, ci) => {
       const [x, w] = X[ci];
-      const free = 1 - 2 * PAD - GAP * (col.length - 1);
+      const spare = avail(col) - unit * sum(col);
+      const firstLow = col.findIndex((c) => LOWER.includes(c));
       let y = PAD;
-      col.forEach((c) => {
-        const h = (free * wt(c)) / sum(col);
-        const ww = wt(c) < 0.6 ? w * 0.78 : w; // small things don't need the full column width
+      col.forEach((c, i) => {
+        if (i === firstLow) y += spare; // push bottoms and shoes down to the bottom edge
+        const h = unit * wt(c);
+        const ww = SMALL.includes(c) && c !== "bag" ? w * 0.78 : w;
         out.push({ it: byId[look[c]], rect: [x + (w - ww) / 2, y, ww, h] });
         y += h + GAP;
       });
@@ -567,21 +577,142 @@
     return out;
   }
 
-  function renderCollage(el, look, variant = state.collageVariant) {
+  /* hand-made arrangement: { variant, rects: { itemId: [x,y,w,h] }, z: { itemId: n } }
+     — for the outfit on screen it lives in this browser (per outfit), and is saved with the look in the lookbook */
+  const collageEdits = store.get("collageEdits", {});
+  const currentEdits = () => collageEdits[lookKey(outfit())] || null;
+  function saveEdits(look, e) {
+    const k = lookKey(look);
+    if (e) collageEdits[k] = e; else delete collageEdits[k];
+    store.set("collageEdits", collageEdits);
+  }
+  function collageParts(look, edits, variant = state.collageVariant) {
+    const parts = collageLayout(look, edits ? edits.variant ?? variant : variant);
+    if (edits) {
+      parts.forEach((p) => {
+        const r = edits.rects?.[p.it.id];
+        if (r) p.rect = r.slice();
+        p.z = edits.z?.[p.it.id] || 0;
+      });
+      parts.sort((a, b) => a.z - b.z);
+    }
+    return parts;
+  }
+  const placeRect = (img, [x, y, w, h]) =>
+    Object.assign(img.style, { left: x * 100 + "%", top: y * 100 + "%", width: w * 100 + "%", height: h * 100 + "%" });
+
+  function renderCollage(el, look, edits = null, editable = false) {
     el.innerHTML = "";
-    const parts = collageLayout(look, variant);
+    const parts = collageParts(look, edits, edits ? undefined : (editable ? state.collageVariant : 0));
     if (!parts.length) { el.innerHTML = `<div class="collage-empty">тут пока пусто</div>`; return; }
-    parts.forEach(({ it, rect: [x, y, w, h] }) => {
+    parts.forEach(({ it, rect }) => {
       const img = document.createElement("img");
-      img.src = it.img; img.alt = it.name;
-      Object.assign(img.style, { left: x * 100 + "%", top: y * 100 + "%", width: w * 100 + "%", height: h * 100 + "%" });
+      img.src = it.img; img.alt = it.name; img.dataset.id = it.id;
+      placeRect(img, rect);
+      if (editable && state.colSel === it.id) img.classList.add("sel");
       el.append(img);
     });
   }
+  const renderCurrentCollage = () => renderCollage($("#collage"), outfit(), currentEdits(), true);
+
+  // --- arranging by hand ---
+  function setArranging(on) {
+    state.arranging = on;
+    if (!on) state.colSel = null;
+    $("#collage").classList.toggle("arranging", on);
+    $("#arrangeBar").hidden = !on;
+    $("#arrangeBtn").textContent = on ? "готово" : "двигать";
+    $("#arrangeLabel").textContent = "тапни вещь и двигай пальцем, два пальца — размер";
+    if (!$("#tryon").hidden && state.view === "collage") renderCurrentCollage();
+  }
+  // the outfit's arrangement as editable data (starts from the automatic layout)
+  function editableArrangement() {
+    const look = outfit();
+    const e = currentEdits() || { variant: state.collageVariant, rects: {}, z: {} };
+    collageParts(look, e).forEach((p) => { if (!e.rects[p.it.id]) e.rects[p.it.id] = p.rect.slice(); });
+    return e;
+  }
+  function commitRect(id, rect) {
+    const e = editableArrangement();
+    e.rects[id] = rect.map((v) => Math.round(v * 1000) / 1000);
+    saveEdits(outfit(), e);
+  }
+  function selectCollageItem(id) {
+    state.colSel = id;
+    const e = editableArrangement();
+    e.z[id] = Math.max(0, ...Object.values(e.z)) + 1; // bring to front
+    saveEdits(outfit(), e);
+    renderCurrentCollage();
+    $("#arrangeLabel").textContent = `двигаю: ${byId[id]?.name || ""}`;
+  }
+  function resizeSelected(k) {
+    const id = state.colSel;
+    if (!id) return toast("сначала тапни вещь");
+    const [x, y, w, h] = editableArrangement().rects[id];
+    const r = [x - (w * k - w) / 2, y - (h * k - h) / 2, w * k, h * k];
+    commitRect(id, r);
+    const img = $$("#collage img").find((i) => i.dataset.id === id);
+    if (img) placeRect(img, r);
+  }
+  function resetArrangement() {
+    saveEdits(outfit(), null);
+    state.colSel = null;
+    renderCurrentCollage();
+    sfx.click();
+  }
+
+  // drag with one finger, pinch with two
+  const ptrs = new Map();
+  let gesture = null;
+  const collageEl = $("#collage");
+  collageEl.addEventListener("pointerdown", (e) => {
+    if (!state.arranging) return;
+    const img = e.target.closest("img");
+    if (!img && ptrs.size === 0) return;
+    e.preventDefault();
+    try { collageEl.setPointerCapture(e.pointerId); } catch {}
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (img && ptrs.size === 1 && img.dataset.id !== state.colSel) selectCollageItem(img.dataset.id);
+    if (!state.colSel) return;
+    const rect = editableArrangement().rects[state.colSel].slice();
+    const pts = [...ptrs.values()];
+    gesture = pts.length >= 2
+      ? { kind: "pinch", rect, d0: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1 }
+      : { kind: "drag", rect, sx: e.clientX, sy: e.clientY };
+  });
+  collageEl.addEventListener("pointermove", (e) => {
+    if (!gesture || !ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const [x, y, w, h] = gesture.rect;
+    let r;
+    if (gesture.kind === "drag") {
+      r = [x + (e.clientX - gesture.sx) / collageEl.clientWidth, y + (e.clientY - gesture.sy) / collageEl.clientHeight, w, h];
+    } else {
+      const pts = [...ptrs.values()];
+      if (pts.length < 2) return;
+      const k = Math.min(4, Math.max(0.25, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) / gesture.d0));
+      r = [x - (w * k - w) / 2, y - (h * k - h) / 2, w * k, h * k];
+    }
+    gesture.now = r;
+    const img = $$("#collage img").find((i) => i.dataset.id === state.colSel);
+    if (img) placeRect(img, r);
+  });
+  const endGesture = (e) => {
+    ptrs.delete(e.pointerId);
+    if (gesture?.now && state.colSel) commitRect(state.colSel, gesture.now);
+    gesture = null;
+    // a finger still down after a pinch continues as a drag from where things are now
+    if (ptrs.size === 1 && state.colSel) {
+      const p = [...ptrs.values()][0];
+      gesture = { kind: "drag", rect: editableArrangement().rects[state.colSel].slice(), sx: p.x, sy: p.y };
+    }
+  };
+  collageEl.addEventListener("pointerup", endGesture);
+  collageEl.addEventListener("pointercancel", endGesture);
 
   // draw the collage into a picture and share / download it
   async function exportCollage() {
-    const parts = collageLayout(outfit(), state.collageVariant);
+    const parts = collageParts(outfit(), currentEdits());
     if (!parts.length) return toast("сначала выбери вещи");
     toast("собираю картинку…");
     try {
@@ -619,6 +750,7 @@
   function setView(v) {
     state.view = v; store.set("view", v);
     if (v === "collage" && state.tuning) setTuning(false);
+    if (v !== "collage" && state.arranging) setArranging(false);
     applyView();
     refreshStage();
     if (!$("#lookbook").hidden) renderLookbook();
@@ -628,11 +760,13 @@
     $$("[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === state.view));
     $("#stage").hidden = col; $("#collage").hidden = !col;
     $("#relayoutBtn").hidden = !col;
-    $("#tuneBtn").hidden = col; $("#exportBtn").hidden = !col;
+    $("#tuneBtn").hidden = col; $("#exportBtn").hidden = !col; $("#arrangeBtn").hidden = !col;
+    $("#tryon .win-actions").classList.toggle("two-cols", col);
+    if (!col) $("#arrangeBar").hidden = true;
   }
   function renderLookPreview(el, look) {
     el.className = state.view === "collage" ? "collage" : "stage";
-    if (state.view === "collage") renderCollage(el, look, 0); else renderStage(el, look);
+    if (state.view === "collage") renderCollage(el, look, look.collage || null); else renderStage(el, look);
   }
 
   /* ---------- try-on window ---------- */
@@ -733,7 +867,21 @@
   async function like() {
     const look = outfit();
     if (!CATS.some((c) => look[c])) return toast("гардероб пока пуст");
-    if (looks.some((l) => lookKey(l) === lookKey(look))) return toast("этот образ уже в лукбуке");
+    const cur = currentEdits();
+    const edits = cur ? JSON.parse(JSON.stringify(cur)) : null; // a copy: later edits must not change the saved look
+    if (edits) look.collage = edits;
+    const same = looks.find((l) => lookKey(l) === lookKey(look));
+    if (same) {
+      if (!edits || JSON.stringify(same.collage) === JSON.stringify(edits)) return toast("этот образ уже в лукбуке");
+      same.collage = edits;
+      if (isCloud()) {
+        const { id, t, ...outfitData } = same;
+        const { error } = await cloud.sb.from("looks").update({ outfit: outfitData }).eq("id", id);
+        if (error) return toast("не сохранилось: " + error.message);
+      } else store.set("looks", looks);
+      sfx.like();
+      return toast("♥ раскладка в лукбуке обновлена");
+    }
     if (isCloud()) {
       const { data, error } = await cloud.sb.from("looks").insert({ outfit: look }).select().single();
       if (error) return toast("не сохранилось: " + error.message);
@@ -760,6 +908,7 @@
     const ids = Object.fromEntries(CATS.map((c) => [c, look[c] || null]));
     const hidden = CATS.some((c) => ids[c] && byId[ids[c]] && !byCat[c].some((x) => x.id === ids[c]));
     if (hidden) { state.season = ""; store.set("season", ""); }
+    if (look.collage) saveEdits(look, JSON.parse(JSON.stringify(look.collage)));
     reindex(ids);
     saveCurrent();
     switchTab("board");
@@ -1214,9 +1363,15 @@
     full: toggleFull,
     export: exportCollage,
     relayout: () => {
+      // a new automatic layout replaces any hand-made one for this outfit
+      saveEdits(outfit(), null); state.colSel = null;
       state.collageVariant = (state.collageVariant + 1) % COLLAGE_VARIANTS;
       store.set("collageVariant", state.collageVariant); sfx.click(); refreshStage();
     },
+    arrange: () => setArranging(!state.arranging),
+    colsmaller: () => resizeSelected(0.92),
+    colbigger: () => resizeSelected(1.08),
+    colreset: resetArrangement,
   };
 
   document.addEventListener("click", (e) => {

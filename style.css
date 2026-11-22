@@ -177,6 +177,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* collage: flat-lay board */
 .collage { position: relative; aspect-ratio: 3 / 4; width: 100%; background: #f4f1ec; overflow: hidden; }
 .collage img { position: absolute; object-fit: contain; filter: drop-shadow(0 4px 5px #0002); }
+.collage.arranging { touch-action: none; user-select: none; -webkit-user-select: none; }
+.collage.arranging img { cursor: grab; -webkit-user-drag: none; }
+.collage img.sel { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.tune-pad .span2 { grid-column: span 2; }
 .collage-empty { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--pixel); font-size: 9px; color: #999; }
 .win-body > .collage {
   border: 3px solid var(--ink); width: min(340px, 100%, calc((100vh - 290px) * 0.75));
@@ -234,8 +238,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--paper); border: 3px solid var(--ink);
   width: min(260px, 100%, calc((100vh - 300px) * 0.4)); min-width: 150px; box-sizing: content-box;
 }
-.win-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.win-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
 .win-actions .big { font-size: 8px; padding: 12px 4px; }
+.win-actions.two-cols { grid-template-columns: 1fr 1fr; }
 .tune { background: var(--paper); border: 3px solid var(--ink); padding: 10px; }
 .tune-label { margin: 0 0 8px; font-size: 13px; text-align: center; }
 .tune-pad { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
