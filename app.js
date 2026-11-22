@@ -9,7 +9,7 @@
   const THEMES = ["", "pink", "green", "yellow"];
   const BUCKET = "wardrobe";
   const URL_TTL = 60 * 60 * 24 * 7; // signed image links live a week; refreshed on every page load
-  const BG_LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
+  const BG_LIB = "./vendor/bg/bg-removal.js";
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const isOpt = (c) => !!W.categories[c].optional;
@@ -605,23 +605,79 @@
   const toBlob = (canvas, type, q) => new Promise((r) => canvas.toBlob(r, type, q));
   const imageAspect = async (src) => { const img = await loadImg(src); return img.naturalWidth / img.naturalHeight; };
 
-  async function downscale(file, max = 1400) {
-    const img = await loadImg(file);
+  // image file → canvas no bigger than max px, transparency preserved
+  async function toCanvas(src, max = 1400) {
+    const img = await loadImg(src);
     const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement("canvas");
-    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    return toBlob(c, "image/jpeg", 0.9);
+    return c;
+  }
+  const pixels = (c) => c.getContext("2d").getImageData(0, 0, c.width, c.height);
+
+  // share of see-through pixels (iPhone «lift subject» cut-outs are already transparent)
+  function transparentShare(c) {
+    const { data } = pixels(c);
+    let n = 0, t = 0;
+    for (let i = 3; i < data.length; i += 4 * 7) { n++; if (data[i] < 200) t++; }
+    return t / n;
+  }
+  // share of pixels that are clearly visible after a cut-out
+  function solidShare(c) {
+    const { data } = pixels(c);
+    let n = 0, s = 0;
+    for (let i = 3; i < data.length; i += 4 * 7) { n++; if (data[i] > 160) s++; }
+    return s / n;
+  }
+
+  // plain background (sheet, floor, wall): flood-fill it away from the edges by colour
+  function floodCut(src) {
+    const w = src.width, h = src.height;
+    const img = pixels(src), d = img.data;
+    const border = [];
+    for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
+    for (let y = 0; y < h; y++) border.push(y * w, y * w + w - 1);
+    const med = [0, 1, 2].map((ch) => {
+      const v = border.map((p) => d[p * 4 + ch]).sort((a, b) => a - b);
+      return v[v.length >> 1];
+    });
+    const dist = (p) => {
+      const i = p * 4;
+      if (d[i + 3] < 30) return 0; // already transparent counts as background
+      const r = d[i] - med[0], g = d[i + 1] - med[1], b = d[i + 2] - med[2];
+      return Math.sqrt(r * r + g * g + b * b);
+    };
+    const T = 46, SOFT = 26;
+    if (border.filter((p) => dist(p) < T).length / border.length < 0.8) return null; // background isn't plain
+    const bg = new Uint8Array(w * h);
+    const queue = new Int32Array(w * h);
+    let head = 0, tail = 0;
+    for (const p of border) if (!bg[p] && dist(p) < T) { bg[p] = 1; queue[tail++] = p; }
+    while (head < tail) {
+      const p = queue[head++], x = p % w;
+      const nb = [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w];
+      for (const q of nb) if (q >= 0 && q < w * h && !bg[q] && dist(q) < T) { bg[q] = 1; queue[tail++] = q; }
+    }
+    // soft edge: object pixels touching the background fade by how close they are to its colour
+    for (let p = 0; p < w * h; p++) {
+      if (bg[p]) { d[p * 4 + 3] = 0; continue; }
+      const x = p % w;
+      const touches = (x > 0 && bg[p - 1]) || (x < w - 1 && bg[p + 1]) || (p >= w && bg[p - w]) || (p + w < w * h && bg[p + w]);
+      if (touches) {
+        const k = Math.min(1, Math.max(0, (dist(p) - T) / SOFT));
+        d[p * 4 + 3] = Math.round(d[p * 4 + 3] * (0.35 + 0.65 * k));
+      }
+    }
+    const out = document.createElement("canvas");
+    out.width = w; out.height = h;
+    out.getContext("2d").putImageData(img, 0, 0);
+    return out;
   }
 
   // crop transparent margins so the picture's box matches the garment itself
-  async function trim(blob, max = 1000) {
-    const img = await loadImg(blob);
-    const c = document.createElement("canvas");
-    c.width = img.naturalWidth; c.height = img.naturalHeight;
-    const ctx = c.getContext("2d");
-    ctx.drawImage(img, 0, 0);
-    const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height);
+  function trimCanvas(c, max = 1000) {
+    const { data, width, height } = pixels(c);
     let x0 = width, y0 = height, x1 = -1, y1 = -1;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -645,20 +701,40 @@
     return toBlob(o, "image/png");
   }
 
+  // neural network, served from this site (vendor/bg) so it doesn't depend on outside CDNs
   let bgLib;
-  async function removeBg(blob, onStatus) {
-    onStatus("загружаю нейросеть для фона… (первый раз ~40 МБ, потом быстро)");
+  async function aiCut(c, onStatus) {
+    onStatus("загружаю нейросеть… (первый раз ~60 МБ, потом быстро)");
     bgLib = bgLib || (await import(BG_LIB));
-    const out = await bgLib.removeBackground(blob, {
-      model: "isnet_quint8",
+    const input = await toBlob(c, "image/png");
+    const out = await bgLib.removeBackground(input, {
+      publicPath: new URL("vendor/bg/data/", location.href).href,
+      model: "small",
       output: { format: "image/png" },
       progress: (key, cur, total) => {
         if (key.startsWith("fetch") && total) onStatus(`скачиваю нейросеть… ${Math.round((cur / total) * 100)}%`);
         else if (key.startsWith("compute")) onStatus("убираю фон…");
       },
     });
-    return trim(out);
+    return toCanvas(out, 4000);
   }
+
+  // try, in order: already transparent → plain background by colour → neural network
+  async function cutout(c, onStatus) {
+    if (transparentShare(c) > 0.03) return { blob: await trimCanvas(c), how: "фон уже прозрачный ✓" };
+    const flat = floodCut(c);
+    if (flat) {
+      const s = solidShare(flat);
+      if (s > 0.03 && s < 0.97) return { blob: await trimCanvas(flat), how: "готово ✓ фон убран" };
+    }
+    const ai = await aiCut(c, onStatus);
+    const s = solidShare(ai);
+    if (s < 0.03) throw new Error("нейросеть не нашла вещь на фото");
+    return { blob: await trimCanvas(ai), how: "готово ✓ фон убран нейросетью" };
+  }
+
+  // the untouched photo: PNG if it has transparency, JPEG otherwise
+  const plainBlob = (c) => (transparentShare(c) > 0.03 ? toBlob(c, "image/png") : toBlob(c, "image/jpeg", 0.9));
 
   async function upload(folder, blob) {
     const ext = blob.type === "image/png" ? "png" : "jpg";
@@ -668,14 +744,16 @@
     return path;
   }
 
+  const missingSeasons = (e) => /seasons/i.test(e?.message || "") || e?.code === "42703" || e?.code === "PGRST204";
   const dbError = (e) => {
     const m = e?.message || String(e);
-    if (/seasons|items_cat_check|check constraint/i.test(m)) return "нужно обновить базу: выполни migration-2.sql в Supabase";
+    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-2.sql). (${m})`;
+    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-2.sql). (${m})`;
     return m;
   };
 
   /* ---------- add / edit item ---------- */
-  const add = { orig: null, blob: null, busy: false, token: 0, edit: null };
+  const add = { orig: null, canvas: null, blob: null, busy: false, token: 0, edit: null };
   const addStatus = (t) => { $("#addStatus").textContent = t; };
   function buildAddForm() {
     $("#addCats").innerHTML = CATS.map((c) =>
@@ -701,7 +779,7 @@
     $("#saveBtn").disabled = on;
   }
   function resetAdd() {
-    add.orig = add.blob = add.edit = null; add.token++;
+    add.orig = add.canvas = add.blob = add.edit = null; add.token++;
     $("#addFile").value = ""; $("#addFile").disabled = false;
     $("#addPreview").hidden = true; $("#drop").classList.remove("has");
     $("#addBgRow").hidden = false;
@@ -735,14 +813,14 @@
     if (!$("#addBg").checked) { add.blob = add.orig; addPreview(add.orig); addBusy(false); return addStatus(""); }
     addBusy(true);
     try {
-      const out = await removeBg(add.orig, (t) => token === add.token && addStatus(t));
+      const { blob, how } = await cutout(add.canvas, (t) => token === add.token && addStatus(t));
       if (token !== add.token) return;
-      add.blob = out; addPreview(out); addStatus("готово ✓ фон убран");
+      add.blob = blob; addPreview(blob); addStatus(how);
     } catch (e) {
       console.error(e);
       if (token !== add.token) return;
       add.blob = add.orig; addPreview(add.orig);
-      addStatus("фон убрать не вышло, сохраню как есть. Совет: на айфоне в «Фото» зажми вещь → «Поделиться» → сохрани, фон уберётся сам");
+      addStatus(`фон убрать не вышло (${e.message || e}), сохраню как есть. Совет: на айфоне в «Фото» зажми вещь → «Поделиться» → сохрани, фон уберётся сам`);
     } finally {
       if (token === add.token) addBusy(false);
     }
@@ -750,7 +828,8 @@
   $("#addFile").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      add.orig = await downscale(f);
+      add.canvas = await toCanvas(f);
+      add.orig = await plainBlob(add.canvas);
       addPreview(add.orig);
       processAdd();
     } catch (err) { addStatus(err.message); }
@@ -769,7 +848,14 @@
       const blob = add.blob;
       const box = fitBox(catBox(cat), await imageAspect(blob)).map((v) => Math.round(v * 10) / 10);
       const path = await upload("items", blob);
-      const { data, error } = await cloud.sb.from("items").insert({ cat, name, img_path: path, box, seasons }).select().single();
+      const row = { cat, name, img_path: path, box, seasons };
+      let { data, error } = await cloud.sb.from("items").insert(row).select().single();
+      if (error && missingSeasons(error)) {
+        // database not migrated yet: save without seasons rather than lose the photo
+        delete row.seasons;
+        ({ data, error } = await cloud.sb.from("items").insert(row).select().single());
+        if (!error) setTimeout(() => toast("сезоны не сохранились: обнови базу (migration-2.sql)"), 2700);
+      }
       if (error) { cloud.sb.storage.from(BUCKET).remove([path]); throw error; }
       const urls = await signUrls([path]);
       items.push({ id: data.id, cat, name, img: urls[path], path, box, seasons });
@@ -827,10 +913,10 @@
   $("#modelFile").addEventListener("change", async (e) => {
     const f = e.target.files[0]; e.target.value = ""; if (!f) return;
     try {
-      const base = await downscale(f, 1600);
+      const base = await toCanvas(f, 1600);
       let blob;
-      try { blob = await removeBg(base, toast); }
-      catch (err) { console.error(err); blob = base; toast("фон убрать не вышло, загружаю как есть"); }
+      try { blob = (await cutout(base, toast)).blob; }
+      catch (err) { console.error(err); blob = await plainBlob(base); toast("фон убрать не вышло, загружаю как есть"); }
       toast("загружаю фото…");
       const path = await upload("model", blob);
       const { error } = await cloud.sb.from("settings").upsert({ key: "model", value: { path } });

@@ -4,3 +4,6 @@ alter table public.items add column if not exists seasons text[] not null defaul
 alter table public.items drop constraint if exists items_cat_check;
 alter table public.items add constraint items_cat_check
   check (cat in ('top', 'bottom', 'shoes', 'bag', 'outer', 'hat', 'jewelry'));
+
+-- обновить кэш схемы, чтобы сайт сразу увидел новые колонки
+notify pgrst, 'reload schema';
