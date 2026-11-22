@@ -57,6 +57,34 @@
     return [x, y, w, w / a];
   }
 
+  // where a real photo of a laid-out garment goes on the 200×500 mannequin.
+  // Flat-lay photos have sleeves and legs spread out, so clothes are fitted to the body
+  // (and may be stretched a little) instead of keeping the photo's proportions.
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const centred = (w, y, h) => [100 - w / 2, y, w, h];
+  const r1 = (b) => b.map((v) => Math.round(v * 10) / 10);
+  function smartBox(cat, a) {
+    switch (cat) {
+      case "top": return r1(centred(132, 80, clamp(132 / a, 135, 175)));      // shoulders → hips
+      case "outer": return r1(centred(140, 76, clamp(140 / a, 150, 235)));
+      case "dress": return r1(centred(112, 82, clamp(112 / a, 150, 300)));
+      case "bottom":
+        if (a < 0.9) return r1(centred(clamp(268 * a, 64, 98), 194, 268));    // trousers: waist → ankles
+        return r1(centred(92, 194, clamp(92 / a, 50, 200)));                    // skirt / shorts
+      default: return r1(fitBox(catBox(cat), a));
+    }
+  }
+  // boxes that earlier versions set automatically (photo proportions kept) — safe to re-fit
+  const OLD_AUTO = { top: [36, 74, 128, 170], bottom: [58, 194, 84, 270], outer: [30, 70, 140, 210], dress: [44, 76, 112, 260] };
+  function wasAutoPlaced(it) {
+    const o = OLD_AUTO[it.cat], b = it.box;
+    if (!o || !Array.isArray(b) || b.length !== 4) return false;
+    const eq = (u, v) => Math.abs(u - v) < 0.3;
+    const widthLimited = eq(b[0], o[0]) && eq(b[1], o[1]) && eq(b[2], o[2]);
+    const heightLimited = eq(b[1], o[1]) && eq(b[3], o[3]) && eq(b[0] + b[2] / 2, o[0] + o[2] / 2);
+    return widthLimited || heightLimited;
+  }
+
   // rebuild per-category lists for the season filter, then point every slot at the given item ids
   function reindex(ids = store.get(curKey(), {})) {
     byId = Object.fromEntries(items.map((i) => [i.id, i]));
@@ -115,6 +143,11 @@
     }));
     looks = rl.data.map((r) => ({ ...r.outfit, id: r.id, t: Date.parse(r.created_at) }));
     modelUrl = (modelPath && urls[modelPath]) || W.model;
+    // re-seat garments that were placed by the old proportional rule and never adjusted by hand
+    items.filter(wasAutoPlaced).forEach((it) => {
+      it.box = smartBox(it.cat, it.box[2] / it.box[3]);
+      sb.from("items").update({ box: it.box }).eq("id", it.id).then(({ error }) => error && console.error(error));
+    });
   }
 
   async function load() {
@@ -529,6 +562,12 @@
     const [x, y, w, h] = boxOf(it);
     setFit(it.id, [x + dx, y + dy, w, h]);
   }
+  // separate width / height: width grows from the centre, length from the top (waist / shoulders stay put)
+  function stretch(kx, ky) {
+    const it = selected(); if (!it) return;
+    const [x, y, w, h] = boxOf(it);
+    setFit(it.id, [x - (w * kx - w) / 2, y, w * kx, h * ky]);
+  }
   function scale(k) {
     const it = selected(); if (!it) return;
     const [x, y, w, h] = boxOf(it);
@@ -542,7 +581,7 @@
     }
     const l = layerEl(it.id);
     const a = l && l.naturalWidth ? l.naturalWidth / l.naturalHeight : 1;
-    setFit(it.id, fitBox(catBox(it.cat), a));
+    setFit(it.id, smartBox(it.cat, a));
   }
 
   // drag layers with finger/mouse
@@ -891,7 +930,7 @@
     addBusy(true); addStatus("загружаю в облако…");
     try {
       const blob = add.blob;
-      const box = fitBox(catBox(cat), await imageAspect(blob)).map((v) => Math.round(v * 10) / 10);
+      const box = smartBox(cat, await imageAspect(blob));
       const path = await upload("items", blob);
       const row = { cat, name, img_path: path, box, seasons };
       let { data, error } = await cloud.sb.from("items").insert(row).select().single();
@@ -925,7 +964,7 @@
     const patch = { cat, name, seasons };
     addBusy(true); addStatus("сохраняю…");
     try {
-      if (cat !== it.cat) patch.box = fitBox(catBox(cat), await imageAspect(it.img)).map((v) => Math.round(v * 10) / 10);
+      if (cat !== it.cat) patch.box = smartBox(cat, await imageAspect(it.img));
       const { error } = await cloud.sb.from("items").update(patch).eq("id", it.id);
       if (error) throw error;
       Object.assign(it, patch);
@@ -1059,6 +1098,8 @@
     if (n) { const [dx, dy] = n.dataset.nudge.split(",").map(Number); return nudge(dx, dy); }
     const s = e.target.closest("[data-scale]");
     if (s) return scale(+s.dataset.scale);
+    const st = e.target.closest("[data-stretch]");
+    if (st) { const [kx, ky] = st.dataset.stretch.split(",").map(Number); return stretch(kx, ky); }
     const t = e.target.closest("[data-tab]");
     if (t) { sfx.click(); return switchTab(t.dataset.tab); }
     if (e.target.classList.contains("modal")) closeModal(e.target);

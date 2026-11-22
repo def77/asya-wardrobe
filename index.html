@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 <div class="frame">
@@ -67,7 +67,7 @@
     </footer>
   </div>
   <div class="hint">
-    <span>примерочная-95 · v7</span>
+    <span>примерочная-95 · v8</span>
     <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк · S — сезон</span>
   </div>
 </div>
@@ -87,6 +87,12 @@
           <button data-scale="0.95">−</button>
           <button data-scale="1.05">+</button>
           <button data-act="resetfit" title="вернуть как было">↺</button>
+        </div>
+        <div class="tune-pad tune-pad-4">
+          <button data-stretch="0.94,1" title="уже">↔ уже</button>
+          <button data-stretch="1.06,1" title="шире">↔ шире</button>
+          <button data-stretch="1,0.95" title="короче">↕ короче</button>
+          <button data-stretch="1,1.05" title="длиннее">↕ длиннее</button>
         </div>
         <div class="tune-model" id="tuneModel" hidden>
           <label class="mini-btn">моё фото<input type="file" accept="image/*" id="modelFile" hidden></label>
@@ -137,9 +143,9 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/supabase.js?v=7"></script>
-<script src="config.js?v=7"></script>
-<script src="wardrobe.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="vendor/supabase.js?v=8"></script>
+<script src="config.js?v=8"></script>
+<script src="wardrobe.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

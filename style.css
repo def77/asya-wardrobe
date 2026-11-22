@@ -190,6 +190,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .stage img { position: absolute; display: block; object-fit: contain; pointer-events: none; }
 .stage .model { inset: 0; width: 100%; height: 100%; }
+.stage .layer { object-fit: fill; } /* garments may be stretched to the body */
 .stage.tuning .layer { pointer-events: auto; cursor: grab; }
 .stage.tuning .layer.sel { outline: 2px dashed var(--accent); outline-offset: 2px; }
 
@@ -225,6 +226,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tune-pad button {
   background: #e9e3da; border: 2px solid var(--ink); padding: 8px 0; font-family: var(--pixel); font-size: 9px;
 }
+.tune-pad-4 { grid-template-columns: repeat(4, 1fr); margin-top: 4px; }
+.tune-pad-4 button { font-family: var(--soft); font-size: 13px; }
 .tune-pad button[data-act="resetfit"] { font-size: 12px; font-family: var(--soft); }
 
 .toast {
