@@ -172,7 +172,23 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 #0006;
   position: relative; padding: 6px; cursor: pointer;
 }
-.look .stage { width: 100%; }
+.look .stage, .look .collage { width: 100%; }
+
+/* collage: flat-lay board */
+.collage { position: relative; aspect-ratio: 3 / 4; width: 100%; background: #f4f1ec; overflow: hidden; }
+.collage img { position: absolute; object-fit: contain; filter: drop-shadow(0 4px 5px #0002); }
+.collage-empty { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--pixel); font-size: 9px; color: #999; }
+.win-body > .collage {
+  border: 3px solid var(--ink); width: min(340px, 100%, calc((100vh - 290px) * 0.75));
+  min-width: 200px; margin: 0 auto; box-sizing: content-box;
+}
+.seg { display: flex; justify-content: center; }
+.seg button {
+  font-family: var(--pixel); font-size: 8px; text-transform: uppercase; padding: 8px 12px;
+  background: #e9e3da; border: 2px solid var(--ink); margin-left: -2px;
+}
+.seg button.on { background: var(--ink); color: var(--paper); }
+.seg [data-act="relayout"] { margin-left: 8px; font-family: var(--soft); font-size: 15px; padding: 4px 10px; }
 .look-del {
   position: absolute; top: 4px; right: 4px; width: 24px; height: 24px;
   border: 2px solid var(--ink); background: #e9e3da; font-family: var(--pixel); font-size: 9px; line-height: 1; padding: 0;

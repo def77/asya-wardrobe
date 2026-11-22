@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <div class="frame">
@@ -67,7 +67,7 @@
     </footer>
   </div>
   <div class="hint">
-    <span>примерочная-95 · v8</span>
+    <span>примерочная-95 · v9</span>
     <span class="keys">↑↓ вещь · ←→ листать · пробел — рандом · enter — надеть · L — лайк · S — сезон</span>
   </div>
 </div>
@@ -76,7 +76,13 @@
   <div class="win">
     <div class="win-bar"><span>примерочная.exe</span><button data-act="close" aria-label="закрыть">×</button></div>
     <div class="win-body">
+      <div class="seg">
+        <button data-view="doll" class="on">манекен</button>
+        <button data-view="collage">коллаж</button>
+        <button data-act="relayout" id="relayoutBtn" title="другая раскладка" hidden>↻</button>
+      </div>
       <div class="stage" id="stage"></div>
+      <div class="collage" id="collage" hidden></div>
       <div class="tune" id="tune" hidden>
         <p class="tune-label" id="tuneLabel">тапни вещь, потом двигай пальцем</p>
         <div class="tune-pad">
@@ -101,6 +107,7 @@
       </div>
       <div class="win-actions">
         <button class="big" data-act="tune" id="tuneBtn">подогнать</button>
+        <button class="big" data-act="export" id="exportBtn" hidden>сохранить фото</button>
         <button class="big" data-act="like">♥ в лукбук</button>
         <button class="big big-blue" data-act="random">рандом</button>
       </div>
@@ -143,9 +150,9 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/supabase.js?v=8"></script>
-<script src="config.js?v=8"></script>
-<script src="wardrobe.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="vendor/supabase.js?v=9"></script>
+<script src="config.js?v=9"></script>
+<script src="wardrobe.js?v=9"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

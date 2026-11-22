@@ -35,6 +35,8 @@
     season: store.get("season", ""),
     sound: store.get("sound", true),
     theme: store.get("theme", ""),
+    view: store.get("view", "doll"),
+    collageVariant: store.get("collageVariant", 0),
     tuning: false,
     sel: null,
     spinning: false,
@@ -248,7 +250,10 @@
     $("#tuneModel").hidden = !isCloud();
     $("#dollBtn").hidden = !modelPath;
   }
-  const refreshStage = () => { if (!$("#tryon").hidden) renderStage($("#stage"), outfit(), true); };
+  const refreshStage = () => {
+    if ($("#tryon").hidden) return;
+    if (state.view === "collage") renderCollage($("#collage"), outfit()); else renderStage($("#stage"), outfit(), true);
+  };
 
   // positions a slot can take: optional categories also have "nothing" (-1)
   const positions = (c) => [...(isOpt(c) ? [-1] : []), ...byCat[c].map((_, i) => i)];
@@ -513,10 +518,128 @@
   }
   const openModalEl = () => $$(".modal").find((m) => !m.hidden);
 
+  /* ---------- collage: flat-lay board like Pinterest outfit collages ---------- */
+  // relative visual weight (height share) of each kind of thing in a column
+  const WEIGHT = { outer: 1.35, top: 1.05, dress: 1.75, bottom: 1.8, shoes: 0.55, bag: 0.75, hat: 0.45, jewelry: 0.35 };
+  const COLLAGE_VARIANTS = 4;
+
+  // → [{ it, rect: [x, y, w, h] }] in 0..1 of a 3:4 board
+  function collageLayout(look, variant = 0) {
+    const has = (c) => !!(look[c] && byId[look[c]]);
+    const dress = has("dress");
+    let L = ["outer", dress ? null : "top", "shoes"].filter((c) => c && has(c));
+    let R = ["hat", "bag", dress ? "dress" : "bottom", "jewelry"].filter((c) => has(c));
+    if (variant & 2 && L.includes("shoes") && R.includes("bag")) {
+      // swap shoes and bag between the columns
+      L = L.map((c) => (c === "shoes" ? "bag" : c));
+      R = R.filter((c) => c !== "bag").concat("shoes");
+    }
+    // short bottoms (skirts, shorts) take less room than trousers
+    const bottomBox = has("bottom") ? boxOf(byId[look.bottom]) : null;
+    const wt = (c) => (c === "bottom" && bottomBox && bottomBox[3] < 220 ? 1.05 : WEIGHT[c]);
+    const sum = (a) => a.reduce((s, c) => s + wt(c), 0);
+    // balance the two columns by moving small items across
+    for (let guard = 0; guard < 4; guard++) {
+      const d = sum(L) - sum(R);
+      if (d > 1.1) {
+        const c = L.find((x) => wt(x) < 0.8) || L[L.length - 1];
+        L = L.filter((x) => x !== c); R.push(c);
+      } else if (d < -1.1) {
+        const c = R.find((x) => wt(x) < 0.8) || R[0];
+        R = R.filter((x) => x !== c); L.push(c);
+      } else break;
+    }
+    const cols = [L, R].filter((a) => a.length);
+    const X = cols.length === 2 ? [[0.04, 0.47], [0.51, 0.45]] : [[0.2, 0.6]];
+    const PAD = 0.035, GAP = 0.02, out = [];
+    cols.forEach((col, ci) => {
+      const [x, w] = X[ci];
+      const free = 1 - 2 * PAD - GAP * (col.length - 1);
+      let y = PAD;
+      col.forEach((c) => {
+        const h = (free * wt(c)) / sum(col);
+        const ww = wt(c) < 0.6 ? w * 0.78 : w; // small things don't need the full column width
+        out.push({ it: byId[look[c]], rect: [x + (w - ww) / 2, y, ww, h] });
+        y += h + GAP;
+      });
+    });
+    if (variant & 1) out.forEach((o) => { o.rect[0] = 1 - o.rect[0] - o.rect[2]; });
+    return out;
+  }
+
+  function renderCollage(el, look, variant = state.collageVariant) {
+    el.innerHTML = "";
+    const parts = collageLayout(look, variant);
+    if (!parts.length) { el.innerHTML = `<div class="collage-empty">тут пока пусто</div>`; return; }
+    parts.forEach(({ it, rect: [x, y, w, h] }) => {
+      const img = document.createElement("img");
+      img.src = it.img; img.alt = it.name;
+      Object.assign(img.style, { left: x * 100 + "%", top: y * 100 + "%", width: w * 100 + "%", height: h * 100 + "%" });
+      el.append(img);
+    });
+  }
+
+  // draw the collage into a picture and share / download it
+  async function exportCollage() {
+    const parts = collageLayout(outfit(), state.collageVariant);
+    if (!parts.length) return toast("сначала выбери вещи");
+    toast("собираю картинку…");
+    try {
+      const W0 = 1080, H0 = 1440;
+      const c = document.createElement("canvas"); c.width = W0; c.height = H0;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#f4f1ec"; ctx.fillRect(0, 0, W0, H0);
+      for (const { it, rect: [x, y, w, h] } of parts) {
+        const img = await new Promise((res, rej) => {
+          const i = new Image(); i.crossOrigin = "anonymous";
+          i.onload = () => res(i); i.onerror = () => rej(new Error("не загрузилась картинка " + it.name));
+          i.src = it.img;
+        });
+        const iw = img.naturalWidth || 300, ih = img.naturalHeight || 300;
+        const k = Math.min((w * W0) / iw, (h * H0) / ih);
+        const dw = iw * k, dh = ih * k;
+        ctx.drawImage(img, x * W0 + (w * W0 - dw) / 2, y * H0 + (h * H0 - dh) / 2, dw, dh);
+      }
+      ctx.fillStyle = "#9a8f80"; ctx.font = "22px 'Press Start 2P', monospace"; ctx.textAlign = "right";
+      ctx.fillText(W.title.toLowerCase(), W0 - 24, H0 - 14);
+      const blob = await toBlob(c, "image/png");
+      const file = new File([blob], `outfit-${new Date().toISOString().slice(0, 10)}.png`, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: W.title }).catch(() => {});
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        toast("картинка сохранена ✓");
+      }
+    } catch (e) { console.error(e); toast("не получилось: " + (e.message || e)); }
+  }
+
+  // which picture the try-on window and lookbook show: mannequin or collage
+  function setView(v) {
+    state.view = v; store.set("view", v);
+    if (v === "collage" && state.tuning) setTuning(false);
+    applyView();
+    refreshStage();
+    if (!$("#lookbook").hidden) renderLookbook();
+  }
+  function applyView() {
+    const col = state.view === "collage";
+    $$("[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === state.view));
+    $("#stage").hidden = col; $("#collage").hidden = !col;
+    $("#relayoutBtn").hidden = !col;
+    $("#tuneBtn").hidden = col; $("#exportBtn").hidden = !col;
+  }
+  function renderLookPreview(el, look) {
+    el.className = state.view === "collage" ? "collage" : "stage";
+    if (state.view === "collage") renderCollage(el, look, 0); else renderStage(el, look);
+  }
+
   /* ---------- try-on window ---------- */
   function openTryOn() {
     openModal("tryon");
-    renderStage($("#stage"), outfit(), true);
+    applyView();
+    refreshStage();
     sfx.wear();
   }
   function setTuning(on) {
@@ -656,8 +779,8 @@
     looks.forEach((look, i) => {
       const card = document.createElement("div");
       card.className = "look"; card.title = "открыть образ";
-      const st = document.createElement("div"); st.className = "stage";
-      renderStage(st, look);
+      const st = document.createElement("div");
+      renderLookPreview(st, look);
       const date = new Date(look.t).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
       card.append(st);
       card.insertAdjacentHTML("beforeend", `<div class="look-date">${date}</div><button class="look-del" aria-label="удалить">×</button>`);
@@ -1089,6 +1212,11 @@
       $("#soundBtn").classList.toggle("on", state.sound); sfx.click();
     },
     full: toggleFull,
+    export: exportCollage,
+    relayout: () => {
+      state.collageVariant = (state.collageVariant + 1) % COLLAGE_VARIANTS;
+      store.set("collageVariant", state.collageVariant); sfx.click(); refreshStage();
+    },
   };
 
   document.addEventListener("click", (e) => {
@@ -1100,6 +1228,8 @@
     if (s) return scale(+s.dataset.scale);
     const st = e.target.closest("[data-stretch]");
     if (st) { const [kx, ky] = st.dataset.stretch.split(",").map(Number); return stretch(kx, ky); }
+    const v = e.target.closest("[data-view]");
+    if (v) { sfx.click(); return setView(v.dataset.view); }
     const t = e.target.closest("[data-tab]");
     if (t) { sfx.click(); return switchTab(t.dataset.tab); }
     if (e.target.classList.contains("modal")) closeModal(e.target);
