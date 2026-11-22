@@ -3,7 +3,7 @@
   const W = window.WARDROBE;
   const CFG = window.CLOUD || {};
   const CATS = Object.keys(W.categories);
-  const NAV = ["outer", "hat", "shoes", "top", "bottom", "jewelry", "bag"].filter((c) => CATS.includes(c));
+  const NAV = ["outer", "hat", "shoes", "top", "bottom", "dress", "jewelry", "bag"].filter((c) => CATS.includes(c));
   const LAYER_Z = Object.fromEntries(W.layers.map((c, i) => [c, i + 1]));
   const SEASONS = Object.keys(W.seasons);
   const THEMES = ["", "pink", "green", "yellow"];
@@ -13,6 +13,8 @@
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const isOpt = (c) => !!W.categories[c].optional;
+  const SEPARATES = ["top", "bottom"]; // a dress is worn instead of these
+  const hasDress = CATS.includes("dress");
   const rnd = (a) => a[Math.floor(Math.random() * a.length)];
 
   /* ---------- local storage (per-device prefs, demo data) ---------- */
@@ -63,6 +65,21 @@
       const k = byCat[c].findIndex((x) => x.id === ids[c]);
       state.idx[c] = k >= 0 ? k : (isOpt(c) || !byCat[c].length ? -1 : 0);
     });
+    if (hasDress && state.idx.dress >= 0) SEPARATES.forEach((c) => { state.idx[c] = -1; });
+  }
+  const dressOn = () => hasDress && state.idx.dress >= 0;
+  // put on a dress → take off top & bottom (remembered); take it off → put them back
+  function wearDress(on) {
+    if (on) {
+      if (SEPARATES.some((c) => state.idx[c] >= 0)) state.prevSep = Object.fromEntries(SEPARATES.map((c) => [c, state.idx[c]]));
+      SEPARATES.forEach((c) => { state.idx[c] = -1; });
+    } else {
+      SEPARATES.forEach((c) => {
+        if (state.idx[c] >= 0 || !byCat[c].length) return;
+        const prev = state.prevSep?.[c] ?? 0;
+        state.idx[c] = prev >= 0 && prev < byCat[c].length ? prev : 0;
+      });
+    }
   }
 
   function loadDemo() {
@@ -112,7 +129,7 @@
     document.body.classList.remove("loading");
     reindex();
     renderAll();
-    if (cloud.needsMigration) toast("обнови базу: выполни migration-2.sql в Supabase");
+    if (cloud.needsMigration) toast("обнови базу: выполни migration-3.sql в Supabase");
   }
 
   /* ---------- sound (tiny synth, no files) ---------- */
@@ -170,7 +187,8 @@
     const box = $(".slot-img", el);
     if (!it) {
       let msg;
-      if (list.length) msg = `<div class="slot-none">— без —</div>`;
+      if (list.length && SEPARATES.includes(c) && dressOn()) msg = `<div class="slot-none">— на мне платье —</div>`;
+      else if (list.length) msg = `<div class="slot-none">— без —</div>`;
       else if (state.season && items.some((i) => i.cat === c)) msg = `<div class="slot-empty">нет вещей<br>на ${seasonWord(state.season)}</div>`;
       else msg = `<div class="slot-empty">пусто${isCloud() ? "<br>жми «+ вещь»" : ""}</div>`;
       box.innerHTML = msg;
@@ -203,10 +221,21 @@
   const positions = (c) => [...(isOpt(c) ? [-1] : []), ...byCat[c].map((_, i) => i)];
 
   function step(c, d, sound = true) {
+    if (SEPARATES.includes(c) && dressOn()) {
+      // browsing top/bottom while wearing a dress takes the dress off
+      if (!byCat[c].length) return;
+      state.idx.dress = -1;
+      wearDress(false);
+      ["dress", ...SEPARATES].forEach((x) => renderSlot(x));
+      if (sound) sfx.click();
+      saveCurrent(); refreshStage();
+      return;
+    }
     const pos = positions(c);
     if (pos.length < 2) return;
     const i = Math.max(0, pos.indexOf(state.idx[c]));
     state.idx[c] = pos[((i + d) % pos.length + pos.length) % pos.length];
+    if (c === "dress") { wearDress(state.idx.dress >= 0); SEPARATES.forEach((x) => renderSlot(x, false)); }
     renderSlot(c);
     if (sound) sfx.click();
     saveCurrent();
@@ -236,13 +265,25 @@
 
   /* ---------- random: slot-machine spin ---------- */
   function randomTargets() {
-    return Object.fromEntries(CATS.map((c) => {
+    const t = Object.fromEntries(CATS.map((c) => {
       const n = byCat[c].length;
       if (!n) return [c, -1];
+      if (c === "dress") return [c, -1]; // decided below
       if (isOpt(c) && Math.random() < 0.45) return [c, -1];
       const choices = byCat[c].map((_, i) => i).filter((i) => n < 2 || i !== state.idx[c]);
       return [c, rnd(choices)];
     }));
+    return chooseDress(t, hasDress ? byCat.dress.map((_, i) => i) : []);
+  }
+  // sometimes a dress instead of top + bottom (always, if there are no separates at all)
+  function chooseDress(t, dresses) {
+    if (!dresses.length) return t;
+    const noSeparates = SEPARATES.every((c) => t[c] < 0);
+    if (noSeparates || Math.random() < 0.3) {
+      t.dress = rnd(dresses);
+      SEPARATES.forEach((c) => { t[c] = -1; });
+    }
+    return t;
   }
 
   function spin(targets = randomTargets()) {
@@ -252,6 +293,7 @@
     let done = 0;
     const finish = () => {
       state.spinning = false;
+      CATS.forEach((c) => renderSlot(c, false));
       sfx.land();
       saveCurrent();
       refreshStage();
@@ -357,9 +399,10 @@
     };
   }
   function weatherTargets(p) {
-    return Object.fromEntries(CATS.map((c) => {
+    const t = Object.fromEntries(CATS.map((c) => {
       const list = byCat[c];
       const ok = list.map((it, i) => [it, i]).filter(([it]) => fitsSeason(it, p.seasons)).map(([, i]) => i);
+      if (c === "dress") return [c, -1]; // decided below
       if (isOpt(c)) {
         const mode = c === "outer" ? p.outer : c === "hat" ? p.hat : "maybe";
         if (mode === "no" || !ok.length) return [c, -1];
@@ -371,6 +414,8 @@
       if (!list.length) return [c, -1];
       return [c, ok.length ? rnd(ok) : Math.floor(Math.random() * list.length)];
     }));
+    const dresses = hasDress ? byCat.dress.map((it, i) => [it, i]).filter(([it]) => fitsSeason(it, p.seasons)).map(([, i]) => i) : [];
+    return chooseDress(t, dresses);
   }
   async function today(askPlace = false) {
     if (state.spinning) return;
@@ -747,8 +792,8 @@
   const missingSeasons = (e) => /seasons/i.test(e?.message || "") || e?.code === "42703" || e?.code === "PGRST204";
   const dbError = (e) => {
     const m = e?.message || String(e);
-    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-2.sql). (${m})`;
-    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-2.sql). (${m})`;
+    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-3.sql). (${m})`;
+    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-3.sql). (${m})`;
     return m;
   };
 
@@ -854,7 +899,7 @@
         // database not migrated yet: save without seasons rather than lose the photo
         delete row.seasons;
         ({ data, error } = await cloud.sb.from("items").insert(row).select().single());
-        if (!error) setTimeout(() => toast("сезоны не сохранились: обнови базу (migration-2.sql)"), 2700);
+        if (!error) setTimeout(() => toast("сезоны не сохранились: обнови базу (migration-3.sql)"), 2700);
       }
       if (error) { cloud.sb.storage.from(BUCKET).remove([path]); throw error; }
       const urls = await signUrls([path]);
