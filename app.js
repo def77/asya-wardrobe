@@ -3,7 +3,7 @@
   const W = window.WARDROBE;
   const CFG = window.CLOUD || {};
   const CATS = Object.keys(W.categories);
-  const NAV = ["outer", "hat", "shoes", "top", "bottom", "dress", "jewelry", "bag"].filter((c) => CATS.includes(c));
+  const NAV = ["outer", "layer", "hat", "shoes", "top", "bottom", "dress", "jewelry", "bag"].filter((c) => CATS.includes(c));
   const LAYER_Z = Object.fromEntries(W.layers.map((c, i) => [c, i + 1]));
   const SEASONS = Object.keys(W.seasons);
   const THEMES = ["", "pink", "green", "yellow"];
@@ -72,6 +72,7 @@
     switch (cat) {
       case "top": return r1(centred(132, 80, clamp(132 / a, 135, 175)));      // shoulders → hips
       case "outer": return r1(centred(140, 76, clamp(140 / a, 150, 235)));
+      case "layer": return r1(centred(136, 78, clamp(136 / a, 125, 190)));      // vest / cardigan / open shirt
       case "dress": return r1(centred(112, 82, clamp(112 / a, 150, 300)));
       case "bottom":
         if (a < 0.9) return r1(centred(clamp(268 * a, 64, 98), 194, 268));    // trousers: waist → ankles
@@ -417,7 +418,7 @@
     if (!pool.length) return toast(items.some((i) => i.colors?.length) ? "не нашлось удачных сочетаний — добавь вещей" : "у вещей пока не определены цвета");
     pool.sort((x, y) => y.a.score - x.a.score);
     const usedScheme = {}, usedItem = {}, chosen = [];
-    const BIG = ["outer", "top", "bottom", "dress"];
+    const BIG = ["outer", "layer", "top", "bottom", "dress"];
     while (chosen.length < n && pool.length) {
       let best = -1, bestV = -Infinity;
       pool.slice(0, 300).forEach((p, i) => {
@@ -540,6 +541,7 @@
     return {
       seasons, wet, snow,
       outer: t < 16 || wet || snow ? "need" : t > 22 ? "no" : "maybe",
+      layer: t > 20 ? "no" : "maybe",
       hat: t <= 3 || snow ? "need" : "maybe",
     };
   }
@@ -549,7 +551,7 @@
       const ok = list.map((it, i) => [it, i]).filter(([it]) => fitsSeason(it, p.seasons)).map(([, i]) => i);
       if (c === "dress") return [c, -1]; // decided below
       if (isOpt(c)) {
-        const mode = c === "outer" ? p.outer : c === "hat" ? p.hat : "maybe";
+        const mode = c === "outer" ? p.outer : c === "hat" ? p.hat : c === "layer" ? p.layer : "maybe";
         if (mode === "no" || !ok.length) return [c, -1];
         if (mode === "maybe" && Math.random() < (c === "hat" ? 0.65 : 0.4)) return [c, -1];
         // when it's needed (cold / rain), prefer things made for the coldest fitting season
@@ -626,7 +628,7 @@
 
   /* ---------- collage: flat-lay board like Pinterest outfit collages ---------- */
   // relative visual weight (height share) of each kind of thing in a column
-  const WEIGHT = { outer: 1.35, top: 1.05, dress: 1.75, bottom: 1.8, shoes: 0.55, bag: 0.75, hat: 0.45, jewelry: 0.35 };
+  const WEIGHT = { outer: 1.35, layer: 1.0, top: 1.05, dress: 1.75, bottom: 1.8, shoes: 0.55, bag: 0.75, hat: 0.45, jewelry: 0.35 };
   const COLLAGE_VARIANTS = 4;
 
   // → [{ it, rect: [x, y, w, h] }] in 0..1 of a 3:4 board
@@ -634,12 +636,12 @@
     const has = (c) => !!(look[c] && byId[look[c]]);
     const dress = has("dress");
     // body order: what's higher on the body goes higher on the board
-    const ORDER = ["hat", "outer", "top", "jewelry", "bag", "dress", "bottom", "shoes"];
+    const ORDER = ["hat", "outer", "layer", "top", "jewelry", "bag", "dress", "bottom", "shoes"];
     const SMALL = ["hat", "jewelry", "bag", "shoes"]; // only these may change columns
     const LOWER = ["dress", "bottom", "shoes"];        // these sit at the bottom of their column
     const byBody = (a) => a.sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y));
     // left: upper-body clothes; right: accessories on top, bottoms / dress / shoes at the bottom
-    let L = ["hat", "outer", dress ? null : "top"].filter((c) => c && has(c));
+    let L = ["hat", "outer", "layer", dress ? null : "top"].filter((c) => c && has(c));
     let R = ["jewelry", "bag", dress ? "dress" : "bottom", "shoes"].filter((c) => has(c));
     if (variant & 2 && R.includes("shoes")) { R = R.filter((c) => c !== "shoes"); L.push("shoes"); }
     // short bottoms (skirts, shorts) take less room than trousers
@@ -1059,7 +1061,7 @@
   }
 
   /* ---------- closet: every item, pick what to wear ---------- */
-  const CLOSET_ORDER = ["top", "bottom", "dress", "outer", "hat", "shoes", "bag", "jewelry"].filter((c) => CATS.includes(c));
+  const CLOSET_ORDER = ["top", "layer", "bottom", "dress", "outer", "hat", "shoes", "bag", "jewelry"].filter((c) => CATS.includes(c));
   function openCloset() {
     state.closetSel = outfit(); // start from what's on now
   }
@@ -1289,14 +1291,14 @@
       const gone = missingCols(res.error, ["seasons", "colors"]).filter((c) => c in row);
       if (!gone.length) return res;
       gone.forEach((c) => delete row[c]);
-      setTimeout(() => toast("часть данных не сохранилась: обнови базу (migration-4.sql)"), 2700);
+      setTimeout(() => toast("часть данных не сохранилась: обнови базу (migration-5.sql)"), 2700);
     }
     return { error: { message: "не получилось сохранить" } };
   }
   const dbError = (e) => {
     const m = e?.message || String(e);
-    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-4.sql). (${m})`;
-    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-4.sql). (${m})`;
+    if (/items_cat_check|check constraint/i.test(m)) return `в базе нет этой категории — выполни обновление базы (migration-5.sql). (${m})`;
+    if (missingSeasons(e)) return `в базе нет сезонов — выполни обновление базы (migration-5.sql). (${m})`;
     return m;
   };
 

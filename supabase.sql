@@ -2,7 +2,7 @@
 
 create table if not exists public.items (
   id         uuid primary key default gen_random_uuid(),
-  cat        text not null check (cat in ('top', 'bottom', 'dress', 'shoes', 'bag', 'outer', 'hat', 'jewelry')),
+  cat        text not null check (cat in ('top', 'layer', 'bottom', 'dress', 'shoes', 'bag', 'outer', 'hat', 'jewelry')),
   name       text not null default '',
   img_path   text not null,
   box        float8[],

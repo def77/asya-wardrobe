@@ -148,7 +148,7 @@
 
   /* ---------- rules ---------- */
   // how much of the look each kind of thing is (for 60-30-10)
-  const AREA = { outer: 0.34, top: 0.28, dress: 0.5, bottom: 0.3, shoes: 0.07, bag: 0.08, hat: 0.04, jewelry: 0.02 };
+  const AREA = { outer: 0.34, layer: 0.2, top: 0.28, dress: 0.5, bottom: 0.3, shoes: 0.07, bag: 0.08, hat: 0.04, jewelry: 0.02 };
   const ACCESSORY = new Set(["shoes", "bag", "hat", "jewelry"]);
   // pairs the article names as good together
   const GOOD = [

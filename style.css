@@ -267,7 +267,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .bar-menu button { font-size: 8px; }
   .board {
     grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px 12px;
-    grid-template-areas: "top top" "bottom bottom" "dress outer" "hat shoes" "jewelry bag" "actions actions";
+    grid-template-areas: "top top" "bottom bottom" "layer outer" "dress hat" "shoes bag" "jewelry jewelry" "actions actions";
   }
   .col { display: contents; }
   .slot[data-cat="top"] { grid-area: top; }
@@ -278,6 +278,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .slot[data-cat="bag"] { grid-area: bag; }
   .slot[data-cat="jewelry"] { grid-area: jewelry; }
   .slot[data-cat="dress"] { grid-area: dress; }
+  .slot[data-cat="layer"] { grid-area: layer; }
   .actions { grid-area: actions; grid-column: auto; grid-template-columns: 1fr 1fr; gap: 8px; }
   .actions .big { padding: 10px 4px; font-size: 8px; }
   .col-side .slot-img { min-height: 96px; }
