@@ -1,0 +1,11 @@
+{
+  "name": "asya-wardrobe-bot",
+  "private": true,
+  "type": "module",
+  "description": "Каждое утро присылает в Telegram образы на сегодня из гардероба Аси",
+  "scripts": { "start": "node daily.mjs" },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.100",
+    "@supabase/supabase-js": "2.118.0"
+  }
+}

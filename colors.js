@@ -97,7 +97,10 @@
     const w = Math.max(1, Math.round((img.naturalWidth || 72) * k)), h = Math.max(1, Math.round((img.naturalHeight || 72) * k));
     const c = document.createElement("canvas"); c.width = w; c.height = h;
     const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
-    const d = ctx.getImageData(0, 0, w, h).data;
+    return fromPixels(ctx.getImageData(0, 0, w, h).data, w, h);
+  }
+  // RGBA pixels of a small (~72px) picture → colours; shared with the Telegram bot
+  function fromPixels(d, w, h) {
     let transparent = 0;
     for (let i = 3; i < d.length; i += 4) if (d[i] < 200) transparent++;
     const cut = transparent / (w * h) > 0.03;
@@ -261,5 +264,5 @@
     return { score, scheme, label: SCHEMES[scheme], palette };
   }
 
-  window.COLORS = { PALETTE, BY, detect, analyze, SCHEMES };
+  window.COLORS = { PALETTE, BY, detect, fromPixels, analyze, SCHEMES };
 })();

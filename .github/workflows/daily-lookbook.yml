@@ -1,0 +1,35 @@
+name: Образ на сегодня в Telegram
+
+on:
+  schedule:
+    - cron: "7 5 * * *"   # каждый день в 08:07 по Москве (05:07 UTC)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "send — прислать образы сейчас; chats — показать chat id тех, кто написал боту"
+        default: send
+        type: choice
+        options: [send, chats]
+
+jobs:
+  lookbook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Установить зависимости
+        working-directory: bot
+        run: npm ci --no-audit --no-fund
+      - name: Собрать и отправить
+        run: node bot/daily.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode == 'chats' && 'chats' || '' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_EMAIL: ${{ secrets.BOT_EMAIL }}
+          BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+          CITY: ${{ vars.CITY || 'Москва' }}
+          OPTIONS: ${{ vars.OPTIONS || '3' }}

@@ -559,6 +559,9 @@
         return [c, rnd(warmest.length ? warmest : ok)];
       }
       if (!list.length) return [c, -1];
+      // shoes: prefer ones made for the main season of the weather (boots in the cold, sandals in the heat)
+      const main = c === "shoes" ? ok.filter((i) => list[i].seasons?.includes(p.seasons[0])) : [];
+      if (main.length) return [c, rnd(main)];
       return [c, ok.length ? rnd(ok) : Math.floor(Math.random() * list.length)];
     }));
     const dresses = hasDress ? byCat.dress.map((it, i) => [it, i]).filter(([it]) => fitsSeason(it, p.seasons)).map(([, i]) => i) : [];
@@ -1118,6 +1121,29 @@
     renderAll();
     openTryOn();
   }
+  // keep what's picked in the closet, match everything else to it by colour rules
+  function closetMatch() {
+    const sel = state.closetSel || {};
+    const fixed = CATS.filter((c) => sel[c] && byId[sel[c]]);
+    if (!fixed.length) return toast("сначала выбери вещь, под которую подбирать");
+    // the picked things must be reachable, whatever the season filter says
+    if (fixed.some((c) => !byCat[c].some((x) => x.id === sel[c]))) setSeason("");
+    const at = Object.fromEntries(fixed.map((c) => [c, byCat[c].findIndex((x) => x.id === sel[c])]));
+    const make = () => {
+      const t = randomTargets();
+      fixed.forEach((c) => { t[c] = at[c]; });
+      if (fixed.includes("dress")) SEPARATES.forEach((c) => { t[c] = -1; });
+      else if (fixed.some((c) => SEPARATES.includes(c))) {
+        t.dress = -1;
+        SEPARATES.forEach((c) => { if (t[c] < 0 && byCat[c].length) t[c] = Math.floor(Math.random() * byCat[c].length); });
+      }
+      return t;
+    };
+    const pick = harmonious(make, 400);
+    switchTab("board");
+    spin(pick);
+    toast("подбираю к: " + fixed.map((c) => byId[sel[c]].name).join(", "));
+  }
   $("#closetGroups").addEventListener("click", (e) => {
     const ed = e.target.closest("[data-edit]");
     if (ed) { e.stopPropagation(); return openEdit(byId[ed.dataset.edit]); }
@@ -1595,6 +1621,7 @@
     },
     full: toggleFull,
     closetwear: closetWear,
+    closetmatch: closetMatch,
     closetclear: () => { state.closetSel = Object.fromEntries(CATS.map((c) => [c, null])); sfx.click(); renderCloset(); },
     autolook: () => autoLookbook(),
     hidepalette: () => { store.set("paletteHidden", true); $("#palette").hidden = true; },
